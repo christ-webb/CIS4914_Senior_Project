@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nomore500s.dev/schemas/span.schema.json",
+  "title": "Span",
+  "type": "object",
+  "required": ["span_id", "type", "name", "started_at", "duration_ms", "status"],
+  "properties": {
+    "span_id": { "type": "string", "format": "uuid" },
+    "parent_span_id": { "type": ["string", "null"], "format": "uuid" },
+    "type": { "enum": ["agent", "llm", "tool", "workflow"] },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "duration_ms": { "type": "number", "minimum": 0 },
+    "status": { "enum": ["unset", "ok", "error"] },
+    "input": { "type": ["object", "null"] },
+    "output": { "type": ["object", "null"] },
+    "attributes": { "type": "object" },
+    "token_count": { "type": "integer", "minimum": 0 },
+    "cost_usd": { "type": "number", "minimum": 0 }
+  },
+  "additionalProperties": false
+}
+

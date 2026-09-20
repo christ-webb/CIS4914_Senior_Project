@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nomore500s.dev/schemas/failure.schema.json",
+  "title": "Failure",
+  "type": "object",
+  "required": ["failure_id", "trace_id", "type", "severity", "message"],
+  "properties": {
+    "failure_id": { "type": "string", "format": "uuid" },
+    "trace_id": { "type": "string", "format": "uuid" },
+    "span_id": { "type": ["string", "null"], "format": "uuid" },
+    "type": { "enum": ["loop", "tool_hallucination", "schema_mismatch", "runtime_error"] },
+    "severity": { "enum": ["info", "warning", "error"] },
+    "message": { "type": "string", "minLength": 1 },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}
