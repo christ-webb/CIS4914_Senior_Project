@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nomore500s.dev/schemas/trace.schema.json",
+  "title": "Trace",
+  "type": "object",
+  "required": ["trace_id", "project_id", "name", "started_at", "status", "spans"],
+  "properties": {
+    "trace_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["unset", "ok", "error"] },
+    "attributes": { "type": "object" },
+    "spans": {
+      "type": "array",
+      "items": { "$ref": "span.schema.json" }
+    }
+  },
+  "additionalProperties": false
+}
+

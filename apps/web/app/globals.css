@@ -1,0 +1,46 @@
+:root {
+  color-scheme: dark;
+  --ink: #f4f6fa;
+  --muted: #a8b0c0;
+  --panel: #171b25;
+  --line: #2a3141;
+  --accent: #f47c48;
+  background: #0d1017;
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; }
+main { max-width: 1400px; margin: 0 auto; padding: 48px 32px; }
+.page-header { margin-bottom: 32px; }
+.page-header h1 { font-size: clamp(2.2rem, 5vw, 4.5rem); margin: 4px 0 8px; }
+.page-header p:last-child { color: var(--muted); }
+.eyebrow { color: var(--accent); font-size: .72rem; font-weight: 800; letter-spacing: .18em; }
+.explorer { display: grid; grid-template-columns: 280px 1fr; min-height: 650px; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; background: var(--panel); }
+.run-list { border-right: 1px solid var(--line); padding: 20px; }
+.run { width: 100%; display: grid; gap: 5px; margin: 8px 0; padding: 14px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.run:hover, .run.active { border-color: var(--accent); background: #202533; }
+.run small { color: var(--muted); }
+.trace-panel { min-width: 0; padding: 24px; }
+.graph-wrap { height: 100%; display: flex; flex-direction: column; }
+.trace-heading { display: flex; justify-content: space-between; gap: 20px; align-items: start; }
+.trace-heading h2 { margin: 0; }
+.trace-heading dl { display: flex; gap: 24px; margin: 0; }
+.trace-heading dl div { display: grid; gap: 3px; }
+.trace-heading dt { color: var(--muted); font-size: .75rem; }
+.trace-heading dd { margin: 0; font-variant-numeric: tabular-nums; }
+.graph { flex: 1; min-height: 500px; margin-top: 20px; border: 1px solid var(--line); border-radius: 14px; background: #11151d; }
+.trace-node, .error-node { width: 220px !important; padding: 14px !important; border: 1px solid #59647a !important; border-radius: 10px !important; background: #222837 !important; color: var(--ink) !important; }
+.error-node { border-color: #f26666 !important; }
+.empty-state { padding: 72px; border: 1px dashed var(--line); border-radius: 20px; text-align: center; color: var(--muted); }
+code { color: var(--ink); }
+
+@media (max-width: 760px) {
+  main { padding: 28px 18px; }
+  .explorer { grid-template-columns: 1fr; }
+  .run-list { border-right: 0; border-bottom: 1px solid var(--line); }
+  .trace-heading, .trace-heading dl { flex-direction: column; }
+}
+

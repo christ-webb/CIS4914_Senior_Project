@@ -1,0 +1,9 @@
+[project]
+name = "no-more-500s-example"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["no-more-500s"]
+
+[tool.uv.sources]
+no-more-500s = { workspace = true }
+
