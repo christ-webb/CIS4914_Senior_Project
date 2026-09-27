@@ -18,4 +18,5 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy apps/api/src packages/python-sdk/src
       - run: uv run pytest
-
+      - run: docker compose up -d --wait clickhouse
+      - run: NM5_TEST_CLICKHOUSE=1 NM5_CLICKHOUSE_PASSWORD=nomore500s uv run pytest apps/api/tests/test_clickhouse_repository.py

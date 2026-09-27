@@ -15,7 +15,7 @@ apps/web/              Next.js dashboard and React Flow trace graph
 packages/python-sdk/   Installable Python instrumentation SDK
 packages/contracts/    Language-neutral JSON Schemas
 examples/simple-agent/ Deterministic end-to-end demo
-infra/clickhouse/      ClickHouse schema for the persistence milestone
+infra/clickhouse/      ClickHouse schema
 docs/                  Architecture, API contract, and ADRs
 ```
 
@@ -51,14 +51,17 @@ make demo
 Open `http://localhost:3000` to view runs and select the generated trace. API
 documentation is available at `http://localhost:8000/docs`.
 
-To start ClickHouse for persistence work:
+To persist traces, set `NM5_TRACE_REPOSITORY=clickhouse` in `.env` and start ClickHouse
+before starting the API:
 
 ```bash
 docker compose up -d clickhouse
+docker compose ps
 ```
 
-The API uses its in-memory repository by default. ADR 0002 records why
-ClickHouse is the selected MVP database and what remains before enabling it.
+The API uses memory by default for lightweight development. ClickHouse retains
+traces across API restarts. See the [development guide](docs/development.md) for
+configuration, verification, and persistence tests.
 
 ## Quality checks
 
@@ -87,4 +90,3 @@ production deployment are intentionally outside this initial scaffold.
 - [API contract](docs/architecture/api-contract.md)
 - [Development guide](docs/development.md)
 - [Architecture decisions](docs/decisions/)
-
