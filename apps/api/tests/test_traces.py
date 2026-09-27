@@ -22,6 +22,7 @@ def test_create_then_fetch_trace() -> None:
 
     created = client.post("/v1/traces", json=payload)
     assert created.status_code == 201
+
     trace = created.json()
     assert trace["total_tokens"] == 12
     assert trace["total_cost_usd"] == 0.001
@@ -29,6 +30,7 @@ def test_create_then_fetch_trace() -> None:
     fetched = client.get(f"/v1/traces/{trace['trace_id']}")
     assert fetched.status_code == 200
     assert fetched.json()["name"] == "healthy run"
+
 
 def test_create_trace_aggregates_multiple_spans() -> None:
     client = TestClient(app)
@@ -63,3 +65,40 @@ def test_create_trace_aggregates_multiple_spans() -> None:
     assert trace["total_tokens"] == 25
     assert trace["total_cost_usd"] == 0.003
     assert len(trace["spans"]) == 2
+
+
+def test_fetch_trace_keeps_multiple_spans() -> None:
+    client = TestClient(app)
+    payload = {
+        "project_id": "test-project",
+        "name": "retrieval test",
+        "status": "ok",
+        "spans": [
+            {
+                "type": "tool",
+                "name": "search",
+                "duration_ms": 20,
+                "status": "ok",
+                "token_count": 10,
+                "cost_usd": 0.001,
+            },
+            {
+                "type": "tool",
+                "name": "summarize",
+                "duration_ms": 30,
+                "status": "ok",
+                "token_count": 15,
+                "cost_usd": 0.002,
+            },
+        ],
+    }
+
+    created = client.post("/v1/traces", json=payload)
+    assert created.status_code == 201
+    trace_id = created.json()["trace_id"]
+
+    fetched = client.get(f"/v1/traces/{trace_id}")
+
+    assert fetched.status_code == 200
+    assert len(fetched.json()["spans"]) == 2
+    assert fetched.json()["total_tokens"] == 25
