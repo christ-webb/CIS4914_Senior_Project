@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from threading import Lock
+from typing import Protocol
 from uuid import UUID
 
 from no_more_500s_api.domain.models import Trace, TraceCreate, TraceSummary
@@ -9,8 +10,16 @@ class TraceNotFoundError(KeyError):
     pass
 
 
+class TraceRepository(Protocol):
+    def save(self, trace_create: TraceCreate) -> Trace: ...
+
+    def get(self, trace_id: UUID) -> Trace: ...
+
+    def list(self) -> Iterable[TraceSummary]: ...
+
+
 class InMemoryTraceRepository:
-    """Development repository. Replace behind this boundary with ClickHouse."""
+    """Lightweight repository for tests and local development."""
 
     def __init__(self) -> None:
         self._traces: dict[UUID, Trace] = {}
@@ -31,7 +40,4 @@ class InMemoryTraceRepository:
     def list(self) -> Iterable[TraceSummary]:
         traces = sorted(self._traces.values(), key=lambda item: item.started_at, reverse=True)
         return [TraceSummary.from_trace(trace) for trace in traces]
-
-
-trace_repository = InMemoryTraceRepository()
 
