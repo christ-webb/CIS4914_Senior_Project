@@ -5,7 +5,7 @@ tests, without changing application behavior or another contributor's components
 
 ## Test layers
 
-- **API contract** (`apps/api/tests/test_api_contract.py`): Uses a fresh
+- **Failure-analysis HTTP API** (`apps/api/tests/test_failure_api.py`): Tests the read-only\n  `GET /v1/traces/{trace_id}/failures` endpoint, repeated identical tool calls,\n  wasted token/cost estimates, empty findings, non-tool spans, 404/422 responses,\n  and preservation of original stored traces and trace summaries.\n- **API contract** (`apps/api/tests/test_api_contract.py`): Uses a fresh
   `InMemoryTraceRepository` per test. Covers listing order and summaries,
   missing/malformed trace IDs, empty traces, valid parent/child relationships,
   and invalid payloads (including validation without accidental persistence).
@@ -20,7 +20,7 @@ tests, without changing application behavior or another contributor's components
 
 ```bash
 uv sync --all-packages --dev
-uv run pytest apps/api/tests/test_api_contract.py apps/api/tests/test_trace_integration_regressions.py packages/python-sdk/tests/test_client.py
+uv run pytest apps/api/tests/test_api_contract.py apps/api/tests/test_trace_integration_regressions.py apps/api/tests/test_failure_api.py packages/python-sdk/tests/test_client.py
 uv run pytest
 uv run ruff check .
 uv run mypy apps/api/src packages/python-sdk/src
@@ -77,3 +77,29 @@ cross-service dashboard reliability, or generalized agent instrumentation.
 Yuvika's end-to-end setup/workflow testing and John's dashboard work remain
 separate. A passing unit suite is not a substitute for the manual dashboard
 trace-selection checklist in `docs/development.md`.
+
+## Failure detection endpoint acceptance
+
+The read-only endpoint `GET /v1/traces/{trace_id}/failures` runs the existing
+identical-input tool-call detector over a persisted trace. The response is a JSON
+list of findings with `span_name`, `repeat_count`, `span_ids`,
+`wasted_tokens`, and `wasted_cost_usd`. The first invocation in each
+repeated group is treated as legitimate for estimated waste accounting.
+
+There are no new database tables or trace mutations. A valid trace with no
+matching pattern returns `200 []`; a missing UUID returns 404, and an invalid
+UUID returns 422. The default threshold is three identical tool calls.
+An empty list does **not** guarantee that the agent executed correctly: the
+rule is only a heuristic for exact repeated tool names and JSON inputs.
+
+Execute the HTTP regression suite with:
+
+```bash
+uv run pytest apps/api/tests/test_failure_api.py -v
+```
+
+To verify the route against real ClickHouse, run the API with
+`NM5_TRACE_REPOSITORY=clickhouse`, create a trace containing at least three
+identical tool calls using `POST /v1/traces`, request the new failures URL,
+restart the API, and check that the same findings remain available. The
+isolated tests use memory storage and do not replace this manual live check.
