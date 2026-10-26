@@ -83,3 +83,40 @@ def test_persistence_across_app_instances() -> None:
         assert client.get(f"/v1/traces/{uuid4()}").status_code == 404
         with pytest.raises(TraceNotFoundError):
             repository().get(uuid4())
+
+
+def test_failure_analysis_survives_clickhouse_reconnection() -> None:
+    """New failure-analysis route must read persisted spans, not memory-only state."""
+    project = f"failure-integration-{uuid4()}"
+    with TestClient(create_app(repository())) as client:
+        response = client.post(
+            "/v1/traces",
+            json={
+                "project_id": project,
+                "name": "repeated-lookup",
+                "spans": [
+                    {
+                        "type": "tool",
+                        "name": "lookup",
+                        "duration_ms": 5,
+                        "input": {"query": "same"},
+                        "token_count": 10,
+                        "cost_usd": 0.02,
+                    }
+                    for _ in range(3)
+                ],
+            },
+        )
+        assert response.status_code == 201, response.text
+        trace_id = response.json()["trace_id"]
+
+    with TestClient(create_app(repository())) as client:
+        response = client.get(f"/v1/traces/{trace_id}/failures")
+        assert response.status_code == 200, response.text
+        findings = response.json()
+        assert len(findings) == 1
+        assert findings[0]["span_name"] == "lookup"
+        assert findings[0]["repeat_count"] == 3
+        assert findings[0]["wasted_tokens"] == 20
+        assert findings[0]["wasted_cost_usd"] == pytest.approx(0.04)
+        assert len(findings[0]["span_ids"]) == 3
