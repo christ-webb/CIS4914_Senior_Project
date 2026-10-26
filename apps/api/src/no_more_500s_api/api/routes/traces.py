@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from no_more_500s_api.domain.models import Trace, TraceCreate, TraceSummary
+from no_more_500s_api.services.failure_detection import LoopFinding, detect_repeated_tool_calls
 from no_more_500s_api.services.trace_service import TraceNotFoundError, TraceRepository
 
 router = APIRouter(prefix="/v1/traces", tags=["traces"])
@@ -32,3 +33,17 @@ def get_trace(trace_id: UUID, trace_repository: RepositoryDependency) -> Trace:
         return trace_repository.get(trace_id)
     except TraceNotFoundError as error:
         raise HTTPException(status_code=404, detail="Trace not found") from error
+
+
+@router.get("/{trace_id}/failures", response_model=list[LoopFinding])
+def get_trace_failures(trace_id: UUID, trace_repository: RepositoryDependency) -> list[LoopFinding]:
+    """Analyze a stored trace for identical repeated tool calls.
+
+    This read-only endpoint returns heuristic findings; an empty list means no
+    repeated-tool-call pattern was found, not that the trace is error-free.
+    """
+    try:
+        trace = trace_repository.get(trace_id)
+    except TraceNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Trace not found") from error
+    return detect_repeated_tool_calls(trace)
