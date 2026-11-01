@@ -8,15 +8,22 @@ async function apiFetch<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function listTraces(): Promise<TraceSummary[]> {
-  try {
-    return await apiFetch<TraceSummary[]>("/v1/traces");
-  } catch {
-    return [];
-  }
+export function fetchTraces(): Promise<TraceSummary[]> {
+  return apiFetch<TraceSummary[]>("/v1/traces");
 }
 
 export function getTrace(traceId: string): Promise<Trace> {
   return apiFetch<Trace>(`/v1/traces/${traceId}`);
 }
 
+const FULL_TRACE_LIMIT = 60;
+
+// The API has no bulk endpoint yet, so fetch the most recent traces individually.
+export async function fetchFullTraces(limit = FULL_TRACE_LIMIT): Promise<Trace[]> {
+  const summaries = await fetchTraces();
+  const recent = [...summaries]
+    .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at))
+    .slice(0, limit);
+  const traces = await Promise.all(recent.map((summary) => getTrace(summary.trace_id).catch(() => null)));
+  return traces.filter((trace): trace is Trace => trace !== null);
+}
