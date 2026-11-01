@@ -267,3 +267,60 @@ section.table-card { margin-bottom: 16px; }
 .classic-explorer .run { color: inherit; font: inherit; cursor: pointer; }
 .classic-explorer .react-flow__node.trace-node { background: var(--panel-2, #151b2b); color: var(--text, #e8ecf6); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: .8rem; }
 .classic-explorer .react-flow__node.error-node { background: rgba(239, 83, 80, .15); color: var(--text, #e8ecf6); border: 1px solid #ef5350; border-radius: 10px; padding: 10px 12px; font-size: .8rem; }
+
+/* Colorful theme layer */
+:root {
+  --accent: #ff7a45;
+  --pink: #f472b6;
+  --cyan: #22d3ee;
+  --grad: linear-gradient(135deg, #ff7a45 0%, #f472b6 50%, #a78bfa 100%);
+}
+body {
+  background:
+    radial-gradient(900px 480px at 90% -10%, rgba(244, 114, 182, .22), transparent 60%),
+    radial-gradient(800px 460px at 0% 0%, rgba(34, 211, 238, .16), transparent 60%),
+    radial-gradient(700px 500px at 50% 110%, rgba(167, 139, 250, .16), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+}
+.page-head h1, .section-title { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.eyebrow { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.logo { background: var(--grad); box-shadow: 0 4px 16px rgba(244, 114, 182, .45); }
+.sidebar { background: linear-gradient(180deg, rgba(167, 139, 250, .10), rgba(8, 10, 18, .7) 40%); }
+.nav-link.active { background: linear-gradient(90deg, rgba(255, 122, 69, .22), rgba(167, 139, 250, .10)); box-shadow: inset 3px 0 0 var(--pink); }
+.nav-link:hover { background: rgba(167, 139, 250, .10); }
+.nav-link svg { color: var(--violet); }
+.nav-link.active svg { color: var(--accent); }
+
+.card { border-top: 2px solid transparent; border-image: none; position: relative; }
+.kpis .card { overflow: hidden; }
+.kpis .card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--grad); }
+.kpis .card:nth-child(1)::before { background: linear-gradient(90deg, #60a5fa, #22d3ee); }
+.kpis .card:nth-child(2)::before { background: linear-gradient(90deg, #f87171, #fb923c); }
+.kpis .card:nth-child(3)::before { background: linear-gradient(90deg, #a78bfa, #f472b6); }
+.kpis .card:nth-child(4)::before { background: linear-gradient(90deg, #2dd4bf, #4ade80); }
+.kpis .card:nth-child(5)::before { background: linear-gradient(90deg, #fbbf24, #ff7a45); }
+.kpis .card:nth-child(1) strong { color: #7dd3fc; }
+.kpis .card:nth-child(3) strong { color: #c4b5fd; }
+.kpis .card:nth-child(4) strong { color: #5eead4; }
+.kpis .card:nth-child(5) strong { color: #fcd34d; }
+.kpi { transition: transform .15s, box-shadow .15s; }
+.kpi:hover { transform: translateY(-3px); box-shadow: 0 16px 36px rgba(167, 139, 250, .22); }
+
+.btn { background: var(--grad); border: 0; color: #fff; font-weight: 600; }
+.btn:hover { filter: brightness(1.12); }
+.tab.active { background: var(--grad); color: #fff; }
+.run.active { border-color: var(--pink); background: linear-gradient(90deg, rgba(255, 122, 69, .14), rgba(167, 139, 250, .12)); }
+.run:hover { background: rgba(167, 139, 250, .10); }
+.bar.ok { background: linear-gradient(180deg, #5eead4, #22c55e); }
+.pill.ok { background: rgba(45, 212, 191, .18); color: #5eead4; }
+.pill.error { background: rgba(248, 113, 113, .2); color: #fca5a5; }
+.table th { color: var(--violet); }
+.table tbody tr:hover { background: rgba(167, 139, 250, .08); }
+.table a, .card a { color: #93c5fd; }
+.table a:hover, .card a:hover { color: var(--pink); }
+
+.classic-explorer .react-flow__node.trace-node { background: linear-gradient(135deg, rgba(96, 165, 250, .22), rgba(167, 139, 250, .22)); border-color: var(--violet); }
+.classic-explorer .react-flow__node.error-node { background: linear-gradient(135deg, rgba(248, 113, 113, .3), rgba(251, 146, 60, .2)); border-color: var(--bad); }
+.react-flow__edge-path { stroke: var(--violet) !important; stroke-width: 2 !important; }
+.react-flow__minimap { background: var(--panel) !important; }
