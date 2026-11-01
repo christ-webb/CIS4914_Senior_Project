@@ -258,3 +258,12 @@ section.table-card { margin-bottom: 16px; }
   .tl-row { grid-template-columns: 120px 1fr 56px; }
   .timeline-scale { padding-left: 130px; padding-right: 66px; }
 }
+
+/* Classic trace explorer (original view) */
+.classic-explorer .graph-wrap { display: grid; gap: 16px; }
+.classic-explorer .trace-heading dl { display: flex; gap: 20px; margin: 0; }
+.classic-explorer .trace-heading dt { color: var(--muted); font-size: .72rem; }
+.classic-explorer .trace-heading dd { margin: 2px 0 0; font-weight: 700; }
+.classic-explorer .run { color: inherit; font: inherit; cursor: pointer; }
+.classic-explorer .react-flow__node.trace-node { background: var(--panel-2, #151b2b); color: var(--text, #e8ecf6); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: .8rem; }
+.classic-explorer .react-flow__node.error-node { background: rgba(239, 83, 80, .15); color: var(--text, #e8ecf6); border: 1px solid #ef5350; border-radius: 10px; padding: 10px 12px; font-size: .8rem; }

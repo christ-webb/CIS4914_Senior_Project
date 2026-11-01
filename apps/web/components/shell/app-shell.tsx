@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z" },
+  { href: "/explorer", label: "Trace Explorer", icon: "M4 6h16M4 12h16M4 18h10" },
   { href: "/analytics", label: "Analytics", icon: "M4 20V10m6 10V4m6 16v-7m5 7H2" },
   { href: "/errors", label: "Errors", icon: "M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" },
 ];

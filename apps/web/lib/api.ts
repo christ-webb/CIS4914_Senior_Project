@@ -12,6 +12,14 @@ export function fetchTraces(): Promise<TraceSummary[]> {
   return apiFetch<TraceSummary[]>("/v1/traces");
 }
 
+export async function listTraces(): Promise<TraceSummary[]> {
+  try {
+    return await fetchTraces();
+  } catch {
+    return [];
+  }
+}
+
 export function getTrace(traceId: string): Promise<Trace> {
   return apiFetch<Trace>(`/v1/traces/${traceId}`);
 }
