@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_origins: str = "http://localhost:3000"
-    trace_repository: str = "memory"
+    trace_repository: str = "clickhouse"
     clickhouse_host: str = "localhost"
     clickhouse_port: int = 8123
     clickhouse_database: str = "nomore500s"

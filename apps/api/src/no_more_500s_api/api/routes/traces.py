@@ -1,13 +1,20 @@
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from no_more_500s_api.domain.models import Trace, TraceCreate, TraceSummary
+from no_more_500s_api.domain.models import SpanStatus, Trace, TraceCreate, TraceSummary
 from no_more_500s_api.services.failure_detection import LoopFinding, detect_repeated_tool_calls
-from no_more_500s_api.services.trace_service import TraceNotFoundError, TraceRepository
+from no_more_500s_api.services.trace_service import (
+    TraceConflictError,
+    TraceListQuery,
+    TraceNotFoundError,
+    TraceRepository,
+    TraceStorageError,
+)
 
-router = APIRouter(prefix="/v1/traces", tags=["traces"])
+router = APIRouter(prefix="/v1", tags=["traces"])
 
 
 def get_repository(request: Request) -> TraceRepository:
@@ -17,25 +24,69 @@ def get_repository(request: Request) -> TraceRepository:
 RepositoryDependency = Annotated[TraceRepository, Depends(get_repository)]
 
 
-@router.post("", response_model=Trace, status_code=status.HTTP_201_CREATED)
+def _storage_http_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Trace storage is unavailable",
+    )
+
+
+@router.post("/traces", response_model=Trace, status_code=status.HTTP_201_CREATED)
 def create_trace(payload: TraceCreate, trace_repository: RepositoryDependency) -> Trace:
-    return trace_repository.save(payload)
+    try:
+        return trace_repository.save(payload)
+    except TraceConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Trace already exists",
+        ) from error
+    except TraceStorageError as error:
+        raise _storage_http_error() from error
 
 
-@router.get("", response_model=list[TraceSummary])
-def list_traces(trace_repository: RepositoryDependency) -> list[TraceSummary]:
-    return list(trace_repository.list())
+@router.get("/traces", response_model=list[TraceSummary])
+def list_traces(
+    trace_repository: RepositoryDependency,
+    project_id: str | None = None,
+    status_filter: Annotated[SpanStatus | None, Query(alias="status")] = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    limit: Annotated[int | None, Query(ge=1, le=200)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[TraceSummary]:
+    query = TraceListQuery(
+        project_id=project_id,
+        status=status_filter,
+        started_after=started_after,
+        started_before=started_before,
+        limit=limit,
+        offset=offset,
+    )
+    try:
+        return list(trace_repository.list(query))
+    except TraceStorageError as error:
+        raise _storage_http_error() from error
 
 
-@router.get("/{trace_id}", response_model=Trace)
+@router.get("/projects", response_model=list[str])
+def list_projects(trace_repository: RepositoryDependency) -> list[str]:
+    try:
+        return list(trace_repository.list_projects())
+    except TraceStorageError as error:
+        raise _storage_http_error() from error
+
+
+@router.get("/traces/{trace_id}", response_model=Trace)
 def get_trace(trace_id: UUID, trace_repository: RepositoryDependency) -> Trace:
     try:
         return trace_repository.get(trace_id)
     except TraceNotFoundError as error:
         raise HTTPException(status_code=404, detail="Trace not found") from error
+    except TraceStorageError as error:
+        raise _storage_http_error() from error
 
 
-@router.get("/{trace_id}/failures", response_model=list[LoopFinding])
+@router.get("/traces/{trace_id}/failures", response_model=list[LoopFinding])
 def get_trace_failures(trace_id: UUID, trace_repository: RepositoryDependency) -> list[LoopFinding]:
     """Analyze a stored trace for identical repeated tool calls.
 
@@ -46,4 +97,6 @@ def get_trace_failures(trace_id: UUID, trace_repository: RepositoryDependency) -
         trace = trace_repository.get(trace_id)
     except TraceNotFoundError as error:
         raise HTTPException(status_code=404, detail="Trace not found") from error
+    except TraceStorageError as error:
+        raise _storage_http_error() from error
     return detect_repeated_tool_calls(trace)

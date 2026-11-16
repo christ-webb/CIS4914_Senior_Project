@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS nomore500s.traces
     total_tokens UInt64,
     total_cost_usd Decimal64(8),
     status LowCardinality(String),
-    attributes_json String
+    attributes_json String,
+    ingestion_id UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
 )
 ENGINE = MergeTree
 ORDER BY (project_id, started_at, trace_id);
@@ -29,7 +30,8 @@ CREATE TABLE IF NOT EXISTS nomore500s.spans
     cost_usd Decimal64(8),
     input_json String,
     output_json String,
-    attributes_json String
+    attributes_json String,
+    ingestion_id UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000')
 )
 ENGINE = MergeTree
 ORDER BY (trace_id, started_at, span_id);

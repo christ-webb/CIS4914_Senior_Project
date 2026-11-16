@@ -18,9 +18,11 @@ flowchart LR
     F --> G[React Flow DAG]
 ```
 
-The API selects a repository at startup. Memory supports lightweight development;
+The API selects a repository at startup. Local development defaults to ClickHouse
+so runs survive API restarts. Isolated unit tests inject the in-memory repository.
 ClickHouse persists each trace summary and its spans in separate MergeTree tables.
-Queries reconstruct ordered spans and parent IDs through the repository boundary.
+Queries reconstruct ordered spans and parent IDs through the repository boundary
+and only return spans that share the committed header `ingestion_id`.
 
 ## Boundaries
 

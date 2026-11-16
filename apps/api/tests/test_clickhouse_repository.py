@@ -7,9 +7,14 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from no_more_500s_api.core.config import Settings
+from no_more_500s_api.domain.models import Span, SpanType, TraceCreate
 from no_more_500s_api.main import create_app
 from no_more_500s_api.services.clickhouse_trace_repository import ClickHouseTraceRepository
-from no_more_500s_api.services.trace_service import TraceNotFoundError
+from no_more_500s_api.services.trace_service import (
+    TraceListQuery,
+    TraceNotFoundError,
+    TraceStorageError,
+)
 
 pytestmark = pytest.mark.skipif(
     os.getenv("NM5_TEST_CLICKHOUSE") != "1", reason="requires local ClickHouse"
@@ -25,6 +30,29 @@ def repository() -> ClickHouseTraceRepository:
         username=settings.clickhouse_user,
         password=settings.clickhouse_password,
     )
+
+
+def _payload(
+    project: str, name: str, started_at: datetime, trace_id: str | None = None
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "project_id": project,
+        "name": name,
+        "started_at": started_at.isoformat(),
+        "spans": [
+            {
+                "type": "agent",
+                "name": "parent",
+                "started_at": started_at.isoformat(),
+                "duration_ms": 50,
+                "token_count": 2,
+                "cost_usd": 0.01,
+            }
+        ],
+    }
+    if trace_id is not None:
+        body["trace_id"] = trace_id
+    return body
 
 
 def test_persistence_across_app_instances() -> None:
@@ -67,7 +95,6 @@ def test_persistence_across_app_instances() -> None:
             if offset == 0:
                 trace_id = response.json()["trace_id"]
 
-    # A fresh app and fresh database connection simulate an API restart.
     with TestClient(create_app(repository())) as client:
         response = client.get(f"/v1/traces/{trace_id}")
         assert response.status_code == 200, response.text
@@ -120,3 +147,130 @@ def test_failure_analysis_survives_clickhouse_reconnection() -> None:
         assert findings[0]["wasted_tokens"] == 20
         assert findings[0]["wasted_cost_usd"] == pytest.approx(0.04)
         assert len(findings[0]["span_ids"]) == 3
+
+
+def test_multiple_runs_survive_restart_and_later_inserts() -> None:
+    project = f"history-{uuid4()}"
+    now = datetime.now(UTC).replace(microsecond=0)
+    ids: list[str] = []
+    with TestClient(create_app(repository())) as client:
+        for index in range(3):
+            response = client.post(
+                "/v1/traces",
+                json=_payload(project, f"run-{index}", now + timedelta(seconds=index)),
+            )
+            assert response.status_code == 201, response.text
+            ids.append(response.json()["trace_id"])
+
+    with TestClient(create_app(repository())) as client:
+        listed = [
+            row
+            for row in client.get("/v1/traces", params={"project_id": project}).json()
+        ]
+        assert [row["name"] for row in listed] == ["run-2", "run-1", "run-0"]
+        for trace_id in ids:
+            assert client.get(f"/v1/traces/{trace_id}").status_code == 200
+        extra = client.post(
+            "/v1/traces",
+            json=_payload(project, "run-3", now + timedelta(seconds=3)),
+        )
+        assert extra.status_code == 201, extra.text
+        listed = client.get("/v1/traces", params={"project_id": project}).json()
+        assert [row["name"] for row in listed] == ["run-3", "run-2", "run-1", "run-0"]
+        assert extra.json()["trace_id"] in {row["trace_id"] for row in listed}
+        projects = client.get("/v1/projects").json()
+        assert project in projects
+        page = client.get("/v1/traces", params={"project_id": project, "limit": 2, "offset": 0})
+        assert [row["name"] for row in page.json()] == ["run-3", "run-2"]
+
+
+def test_duplicate_trace_id_does_not_duplicate_clickhouse_spans() -> None:
+    project = f"dup-{uuid4()}"
+    trace_id = str(uuid4())
+    payload = _payload(project, "once", datetime.now(UTC), trace_id=trace_id)
+    with TestClient(create_app(repository())) as client:
+        assert client.post("/v1/traces", json=payload).status_code == 201
+        conflict = client.post("/v1/traces", json=payload)
+        assert conflict.status_code == 409
+        detail = client.get(f"/v1/traces/{trace_id}").json()
+        assert len(detail["spans"]) == 1
+        assert detail["total_tokens"] == 2
+
+
+def test_header_insert_failure_then_retry_does_not_inflate_visible_spans() -> None:
+    repo = repository()
+    trace_id = uuid4()
+    started = datetime.now(UTC).replace(microsecond=0)
+    payload = TraceCreate(
+        trace_id=trace_id,
+        project_id=f"partial-{uuid4()}",
+        name="retry-safe",
+        started_at=started,
+        spans=[
+            Span(type=SpanType.TOOL, name="only", duration_ms=4, token_count=7, cost_usd=0.03),
+        ],
+    )
+    original_insert_trace = repo._insert_trace
+
+    def fail_once(trace, ingestion_id):  # type: ignore[no-untyped-def]
+        raise RuntimeError("simulated header failure")
+
+    repo._insert_trace = fail_once  # type: ignore[method-assign]
+    with pytest.raises(TraceStorageError):
+        repo.save(payload)
+    repo._insert_trace = original_insert_trace  # type: ignore[method-assign]
+
+    with pytest.raises(TraceNotFoundError):
+        repo.get(trace_id)
+
+    stored = repo.save(payload)
+    assert stored.trace_id == trace_id
+    fetched = repo.get(trace_id)
+    assert len(fetched.spans) == 1
+    assert fetched.total_tokens == 7
+    raw = repo._client_or_raise().query(
+        "SELECT count() FROM spans WHERE trace_id = {trace_id:UUID}",
+        parameters={"trace_id": str(trace_id)},
+    )
+    assert raw.result_rows[0][0] >= 2
+
+
+def test_clickhouse_outage_is_503() -> None:
+    broken = ClickHouseTraceRepository(
+        host="127.0.0.1",
+        port=1,
+        database="nomore500s",
+        username="default",
+        password="wrong",
+    )
+    with TestClient(create_app(broken)) as client:
+        listing = client.get("/v1/traces")
+        assert listing.status_code == 503
+        assert listing.json()["detail"] == "Trace storage is unavailable"
+        created = client.post(
+            "/v1/traces",
+            json=_payload("outage", "nope", datetime.now(UTC)),
+        )
+        assert created.status_code == 503
+
+
+def test_clickhouse_filters_before_limit() -> None:
+    repo = repository()
+    now = datetime.now(UTC).replace(microsecond=0)
+    project = f"filter-{uuid4()}"
+    other = f"other-{uuid4()}"
+    for name, offset, target in (
+        ("keep-old", -20, project),
+        ("other", -10, other),
+        ("keep-new", 0, project),
+    ):
+        repo.save(
+            TraceCreate(
+                project_id=target,
+                name=name,
+                started_at=now + timedelta(seconds=offset),
+                spans=[Span(type=SpanType.AGENT, name="n", duration_ms=1)],
+            )
+        )
+    page = list(repo.list(TraceListQuery(project_id=project, limit=1, offset=0)))
+    assert [row.name for row in page] == ["keep-new"]

@@ -1,8 +1,11 @@
-.PHONY: bootstrap api-dev web-dev demo test lint typecheck check
+.PHONY: bootstrap clickhouse api-dev web-dev demo test lint typecheck check
 
 bootstrap:
 	uv sync --all-packages --dev
 	npm --prefix apps/web install
+
+clickhouse:
+	docker compose up -d --wait clickhouse
 
 api-dev:
 	uv run --package no-more-500s-api uvicorn no_more_500s_api.main:app --reload --port 8000

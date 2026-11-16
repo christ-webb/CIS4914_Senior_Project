@@ -61,6 +61,23 @@ def test_send_trace_posts_serialized_payload_and_returns_response(
     assert b'"project_id":"project"' in requests[0].content
 
 
+def test_send_trace_raises_on_duplicate_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_client = httpx.Client
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.Client:
+        return original_client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(409, json={"detail": "Trace already exists"})
+            ),
+            trust_env=False,
+        )
+
+    monkeypatch.setattr(httpx, "Client", client_factory)
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        NoMore500sClient().send_trace(TraceData(project_id="project", name="run"))
+    assert exc.value.response.status_code == 409
+
+
 def test_send_trace_raises_on_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
     original_client = httpx.Client
 

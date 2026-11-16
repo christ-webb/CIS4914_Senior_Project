@@ -9,16 +9,18 @@ to `main` after branch protection is enabled.
 ## Commands
 
 Run `make bootstrap` once, then `make check` before requesting review. Use
-`make api-dev`, `make web-dev`, and `make demo` for the first vertical slice.
+`make clickhouse`, `make api-dev`, `make web-dev`, and `make demo` for the first
+vertical slice.
 
 ## Persistent local traces
 
-Copy `.env.example` to `.env`, set `NM5_TRACE_REPOSITORY=clickhouse`, then run:
+Copy `.env.example` to `.env`. The default `NM5_TRACE_REPOSITORY=clickhouse`
+is the normal development store. Then run:
 
 ```bash
-docker compose up -d clickhouse
-docker compose ps
+make clickhouse
 make api-dev
+make web-dev
 ```
 
 The API reads `NM5_CLICKHOUSE_HOST`, `NM5_CLICKHOUSE_PORT`,
@@ -27,24 +29,48 @@ The API reads `NM5_CLICKHOUSE_HOST`, `NM5_CLICKHOUSE_PORT`,
 `CLICKHOUSE_USER`, and `CLICKHOUSE_PASSWORD`; keep corresponding values equal.
 The example credentials are only for local development. The mounted
 `infra/clickhouse/init.sql` creates the database and tables on first startup
-with `IF NOT EXISTS`. Existing Compose volumes retain data; changing the SQL
-later does not migrate existing tables automatically.
+with `IF NOT EXISTS`. Existing Compose volumes retain data. The API adds the
+`ingestion_id` column with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on first
+use; it does not drop volumes or rewrite historical rows.
 
-In another terminal run `make demo`, note the printed trace ID, and fetch
-`http://localhost:8000/v1/traces/<trace-id>`. Open the dashboard at
-`http://localhost:3000`. Stop the API process, start `make api-dev` again
-without stopping ClickHouse, and fetch the same ID. To run the live persistence
-test against this Compose instance:
+### Verify history survives restarts
+
+1. Run `make demo` twice. Confirm both runs appear on `/` and `/explorer`.
+2. Stop the API process. Leave ClickHouse running. Do **not** run
+   `docker compose down -v`.
+3. Start `make api-dev` again and confirm both trace IDs still list and open.
+4. Submit a third demo run and confirm all three remain.
+
+Live ClickHouse tests:
 
 ```bash
 NM5_TEST_CLICKHOUSE=1 uv run pytest apps/api/tests/test_clickhouse_repository.py
 ```
 
+Unit tests always call `create_app(InMemoryTraceRepository())`. They do not
+depend on Docker, `.env` import order, or the module-level `app` object.
+
+### Duplicate IDs and partial writes
+
+Re-posting the same `trace_id` returns HTTP 409 and does not add spans. The
+check plus write is covered by a process-local lock (one API process only).
+Each ingest stamps spans and the trace header with an `ingestion_id`. The API
+returns only spans that match the committed header, so a failed header insert
+followed by a retry does not double the visible graph.
+
 The tests use unique project IDs and leave their trace rows in the local
-database. Writes consist of a trace insert followed by a spans insert; they
-are not atomic across tables. The API should not be exposed to untrusted
-telemetry without authorization and input redaction; callers must not send
-credentials, authorization headers, or other secrets in inputs or attributes.
+database. The API should not be exposed to untrusted telemetry without
+authorization and input redaction; callers must not send credentials,
+authorization headers, or other secrets in inputs or attributes.
+
+### Missing run history
+
+| Symptom | Likely cause |
+| --- | --- |
+| Dashboard shows "Can't reach the API" or explorer says storage is unavailable | API down, ClickHouse down, or wrong `NM5_CLICKHOUSE_*` credentials (HTTP 503) |
+| History vanishes after `make api-dev` | `NM5_TRACE_REPOSITORY=memory` in `.env` |
+| Dashboard table only shows eight rows | Use **View all runs** / Trace Explorer |
+| Explorer says no traces match | Filters are active; clear project, status, or time range |
 
 ## Contract changes
 
@@ -90,7 +116,11 @@ npm install
 
 ### Run the local stack
 
-Open three terminals.
+Start ClickHouse, then open three terminals.
+
+```powershell
+docker compose up -d --wait clickhouse
+```
 
 Terminal 1 - API:
 

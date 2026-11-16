@@ -88,7 +88,10 @@ export function DashboardView() {
 
           <section className="split">
             <div className="card table-card">
-              <div className="card-head"><h3>Recent runs</h3></div>
+              <div className="card-head">
+                <h3>Recent runs</h3>
+                <Link href="/explorer" className="row-link">View all runs →</Link>
+              </div>
               <table className="table">
                 <thead>
                   <tr><th>Run</th><th>Project</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Cost</th><th>Started</th></tr>

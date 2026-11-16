@@ -12,9 +12,13 @@ tests, without changing application behavior or another contributor's components
 - **HTTP integration regressions** (`apps/api/tests/test_trace_integration_regressions.py`):\n  Exercises POST/GET/list together with a fresh in-memory repository for each\n  test. Verifies summary/detail consistency, newest-first ordering, empty\n  traces, missing/malformed IDs, invalid request atomicity for existing data,\n  multi-level parent links, nested input/output, and aggregate totals.\n- **Python SDK** (`packages/python-sdk/tests/test_client.py`): Verifies nested
   UUID/date serialization and HTTP request/response and error propagation with
   `httpx.MockTransport`. No server or network connection is required.
+- **Persistence policy** (`apps/api/tests/test_trace_persistence_policy.py`):
+  Isolated in-memory HTTP tests for multiple retained runs, duplicate 409,
+  filter-before-pagination, and 503 storage failures (never empty lists).
 - **Live ClickHouse** (`apps/api/tests/test_clickhouse_repository.py`):
-  Existing opt-in integration check covering restart durability, ordering,
-  multi-span retrieval, totals, and missing traces.
+  Opt-in integration covering restart durability, a later insert after restart,
+  duplicate rejection, header-insert failure then retry (visible spans not
+  doubled), filters before limit, and 503 on connectivity failure.
 
 ## Run checks from the repository root
 
@@ -98,7 +102,7 @@ Execute the HTTP regression suite with:
 uv run pytest apps/api/tests/test_failure_api.py -v
 ```
 
-To verify the route against real ClickHouse, run the API with
+To verify the route against real ClickHouse, run the API with the default
 `NM5_TRACE_REPOSITORY=clickhouse`, create a trace containing at least three
 identical tool calls using `POST /v1/traces`, request the new failures URL,
 restart the API, and check that the same findings remain available. The

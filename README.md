@@ -24,7 +24,7 @@ docs/                  Architecture, API contract, and ADRs
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - Node.js 22+ and npm
-- Docker with Compose (optional, for ClickHouse)
+- Docker with Compose (required for the default ClickHouse store)
 
 ## Start the development stack
 
@@ -35,32 +35,29 @@ cp .env.example .env
 make bootstrap
 ```
 
-Run the API and web app in separate terminals:
+Start ClickHouse, then the API and web app in separate terminals:
 
 ```bash
+make clickhouse
 make api-dev
 make web-dev
 ```
 
-Then send the deterministic example trace:
+Then send the deterministic example trace (run it more than once; earlier runs
+stay in history):
 
 ```bash
 make demo
 ```
 
-Open `http://localhost:3000` to view runs and select the generated trace. API
-documentation is available at `http://localhost:8000/docs`.
+Open `http://localhost:3000` for the latest runs and
+`http://localhost:3000/explorer` for filterable history. API documentation is
+available at `http://localhost:8000/docs`.
 
-To persist traces, set `NM5_TRACE_REPOSITORY=clickhouse` in `.env` and start ClickHouse
-before starting the API:
-
-```bash
-docker compose up -d clickhouse
-docker compose ps
-```
-
-The API uses memory by default for lightweight development. ClickHouse retains
-traces across API restarts. See the [development guide](docs/development.md) for
+`NM5_TRACE_REPOSITORY` defaults to `clickhouse`. Isolated unit tests inject the
+in-memory repository and do not use Docker. Set
+`NM5_TRACE_REPOSITORY=memory` only when you intentionally want a disposable
+process-local store. See the [development guide](docs/development.md) for
 configuration, verification, and persistence tests.
 
 ## Quality checks

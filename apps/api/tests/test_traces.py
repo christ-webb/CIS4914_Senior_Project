@@ -1,9 +1,10 @@
 from fastapi.testclient import TestClient
-from no_more_500s_api.main import app
+from no_more_500s_api.main import create_app
+from no_more_500s_api.services.trace_service import InMemoryTraceRepository
 
 
 def test_create_then_fetch_trace() -> None:
-    client = TestClient(app)
+    client = TestClient(create_app(InMemoryTraceRepository()))
     payload = {
         "project_id": "test-project",
         "name": "healthy run",
@@ -33,7 +34,7 @@ def test_create_then_fetch_trace() -> None:
 
 
 def test_create_trace_aggregates_multiple_spans() -> None:
-    client = TestClient(app)
+    client = TestClient(create_app(InMemoryTraceRepository()))
     payload = {
         "project_id": "test-project",
         "name": "multi-step run",
@@ -68,7 +69,7 @@ def test_create_trace_aggregates_multiple_spans() -> None:
 
 
 def test_fetch_trace_keeps_multiple_spans() -> None:
-    client = TestClient(app)
+    client = TestClient(create_app(InMemoryTraceRepository()))
     payload = {
         "project_id": "test-project",
         "name": "retrieval test",
