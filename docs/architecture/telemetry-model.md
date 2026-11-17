@@ -28,11 +28,17 @@ A span is an observable unit of execution. Initial types are `agent`, `llm`,
 `tool`, and `workflow`. A nullable `parent_span_id` expresses hierarchy. Inputs
 and outputs must be data the instrumented application is authorized to collect.
 
-## Failure
+## Failure / diagnostic finding
 
-A failure is a detector finding linked to a trace and optionally a span. It is
-kept separate from raw spans so algorithms can evolve without rewriting source
-telemetry.
+A diagnostic finding is derived from a reconstructed trace and optionally one
+or more spans. It is kept separate from raw spans so algorithms can evolve
+without rewriting source telemetry. See
+[diagnostics.md](diagnostics.md).
+
+List summaries copy `nm5.source`, `agent.framework`, `gen_ai.provider`,
+`nm5.workspace`, `nm5.cost_status`, `nm5.token_status`, and `nm5.coverage`.
+`cost_status=unavailable` or `token_status=unavailable` is not a reported
+zero. Detectors must not treat missing usage as zero consumption.
 
 ## Attribute conventions
 

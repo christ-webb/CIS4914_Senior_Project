@@ -14,16 +14,23 @@ import {
 } from "@xyflow/react";
 import { useMemo, useState } from "react";
 
+import { findingsForSpan, spanHighlightClass } from "@/lib/diagnostics";
 import { computeTimeline, layoutSpans, mergeLayoutPositions, NODE_H, NODE_W } from "@/lib/layout";
 import { formatCost, formatCostLabel, formatMs, formatTokenLabel } from "@/lib/stats";
-import { isActiveLifecycle, traceLifecycle, type Span, type Trace } from "@/lib/types";
+import {
+  isActiveLifecycle,
+  traceLifecycle,
+  type DiagnosticFinding,
+  type Span,
+  type Trace,
+} from "@/lib/types";
 
-type SpanNodeData = { span: Span; maxDuration: number };
+type SpanNodeData = { span: Span; maxDuration: number; highlight: string };
 type SpanNode = Node<SpanNodeData, "span">;
 
 function SpanNodeView({ data, selected }: NodeProps<SpanNode>) {
-  const { span, maxDuration } = data;
-  const classes = ["span-node", `type-${span.type}`, span.status === "error" ? "is-error" : "", selected ? "is-selected" : ""];
+  const { span, maxDuration, highlight } = data;
+  const classes = ["span-node", `type-${span.type}`, highlight, selected ? "is-selected" : ""];
   return (
     <div className={classes.join(" ")}>
       <Handle type="target" position={Position.Left} />
@@ -44,6 +51,8 @@ export function toGraph(
   spans: Span[],
   activeId: string | null,
   previousPositions: Record<string, { x: number; y: number }> = {},
+  findings: DiagnosticFinding[] = [],
+  selectedFindingId: string | null = null,
 ): { nodes: SpanNode[]; edges: Edge[] } {
   const layout = mergeLayoutPositions(previousPositions, layoutSpans(spans));
   const maxDuration = Math.max(1, ...spans.map((span) => span.duration_ms));
@@ -55,7 +64,11 @@ export function toGraph(
     width: NODE_W,
     height: NODE_H,
     selected: span.span_id === activeId,
-    data: { span, maxDuration },
+    data: {
+      span,
+      maxDuration,
+      highlight: spanHighlightClass(span.span_id, span.status, findings, selectedFindingId),
+    },
   }));
   const edges: Edge[] = layout.edges.map((edge) => {
     const failed = byId.get(edge.target)?.status === "error";
@@ -73,11 +86,28 @@ export function toGraph(
 type Tab = "graph" | "timeline" | "spans";
 const TAB_LABELS: Record<Tab, string> = { graph: "Execution graph", timeline: "Timeline", spans: "Spans" };
 
-export function TraceView({ trace }: { trace: Trace }) {
+export function TraceView({
+  trace,
+  findings = [],
+  selectedFindingId = null,
+  activeId: controlledActiveId,
+  onSelectSpan,
+}: {
+  trace: Trace;
+  findings?: DiagnosticFinding[];
+  selectedFindingId?: string | null;
+  activeId?: string | null;
+  onSelectSpan?: (spanId: string | null) => void;
+}) {
   const [tab, setTab] = useState<Tab>("graph");
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [internalActiveId, setInternalActiveId] = useState<string | null>(null);
+  const activeId = controlledActiveId ?? internalActiveId;
+  const setActiveId = onSelectSpan ?? setInternalActiveId;
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
-  const graph = useMemo(() => toGraph(trace.spans, activeId, positions), [trace.spans, activeId, positions]);
+  const graph = useMemo(
+    () => toGraph(trace.spans, activeId, positions, findings, selectedFindingId),
+    [trace.spans, activeId, positions, findings, selectedFindingId],
+  );
   const nextPositions = Object.fromEntries(graph.nodes.map((node) => [node.id, node.position]));
   if (JSON.stringify(nextPositions) !== JSON.stringify(positions)) {
     setPositions(nextPositions);
@@ -215,19 +245,35 @@ export function TraceView({ trace }: { trace: Trace }) {
           )}
         </div>
         <aside className="span-detail" aria-label="Span details">
-          {active ? <SpanDetail span={active} /> : <p className="muted">Select a span to inspect its input, output and attributes.</p>}
+          {active ? (
+            <SpanDetail span={active} findings={findingsForSpan(findings, active.span_id)} />
+          ) : (
+            <p className="muted">Select a span to inspect its input, output and attributes.</p>
+          )}
         </aside>
       </div>
     </div>
   );
 }
 
-function SpanDetail({ span }: { span: Span }) {
+function SpanDetail({ span, findings }: { span: Span; findings: DiagnosticFinding[] }) {
   return (
     <>
       <p className="eyebrow">{span.type.toUpperCase()}</p>
       <h3>{span.name}</h3>
       <p><span className={`pill ${span.status}`}>{span.status}</span></p>
+      {findings.length > 0 && (
+        <>
+          <h4>Findings</h4>
+          <ul className="finding-list compact">
+            {findings.map((finding) => (
+              <li key={finding.finding_id}>
+                <span className={`pill ${finding.severity}`}>{finding.severity}</span> {finding.title}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <dl className="kv">
         <div><dt>Duration</dt><dd>{formatMs(span.duration_ms)}</dd></div>
         <div><dt>Tokens</dt><dd>{span.token_count.toLocaleString()}</dd></div>

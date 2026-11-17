@@ -34,8 +34,9 @@ only return batch spans that share the committed header `ingestion_id`.
   storage queries.
 - **Contracts:** Define stable, language-neutral event shapes.
 - **Dashboard:** Reads only the public API and maps spans into nodes and edges.
-- **Detectors:** Future services consume stored traces and emit `Failure`
-  records; they do not mutate raw telemetry.
+- **Detectors:** Pure functions consume reconstructed traces and emit
+  diagnostic findings. They do not mutate raw telemetry. See
+  [diagnostics.md](diagnostics.md).
 
 ## Privacy boundary
 
@@ -49,6 +50,5 @@ a model provider's private chain-of-thought reasoning.
 - Schema migrations for future telemetry contract changes
 - Redis until caching or asynchronous ingestion is justified
 - OTLP exporter and framework integrations
-- Loop, schema mismatch, and tool hallucination detectors
-- Cost/latency comparison and regression views
 - Production deployment and operational controls
+- Semantic (non-exact) loop detection and LLM-authored explanations

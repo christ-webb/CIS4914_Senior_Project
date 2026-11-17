@@ -155,6 +155,26 @@ def test_failure_analysis_survives_clickhouse_reconnection() -> None:
         assert findings[0]["wasted_cost_usd"] == pytest.approx(0.04)
         assert len(findings[0]["span_ids"]) == 3
 
+        diagnostics = client.get(f"/v1/traces/{trace_id}/diagnostics")
+        assert diagnostics.status_code == 200, diagnostics.text
+        types = {item["detection_type"] for item in diagnostics.json()["findings"]}
+        assert "repeated_tool_call" in types
+        first_ids = [
+            item["finding_id"]
+            for item in diagnostics.json()["findings"]
+            if item["detection_type"] == "repeated_tool_call"
+        ]
+
+    with TestClient(create_app(repository())) as client:
+        again = client.get(f"/v1/traces/{trace_id}/diagnostics")
+        assert again.status_code == 200, again.text
+        again_ids = [
+            item["finding_id"]
+            for item in again.json()["findings"]
+            if item["detection_type"] == "repeated_tool_call"
+        ]
+        assert again_ids == first_ids
+
 
 def test_multiple_runs_survive_restart_and_later_inserts() -> None:
     project = f"history-{uuid4()}"

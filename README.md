@@ -50,12 +50,17 @@ earlier runs stay in history:
 
 ```bash
 make demo
+make demo-diagnostics
 ```
 
 Open `http://localhost:3000` while the demo is running: an **Active runs** row
 should appear before the process exits. After it finishes, the same trace stays
-in Recent runs and Trace Explorer. API documentation is at
-`http://localhost:8000/docs`.
+in Recent runs and Trace Explorer. `make demo-diagnostics` emits identical
+failed `read_file` calls; the Errors page and trace graph should show
+evidence-backed findings linked to those spans. `make demo` should not create
+false failure findings. API documentation is at `http://localhost:8000/docs`.
+Diagnostic types and thresholds are in
+[docs/architecture/diagnostics.md](docs/architecture/diagnostics.md).
 
 With Gemini credentials, `uv run --package no-more-500s-example python examples/simple-agent/gemini_agent.py`
 uses the same live SDK against the real model.

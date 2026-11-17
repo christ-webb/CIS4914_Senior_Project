@@ -1,17 +1,54 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nomore500s.dev/schemas/failure.schema.json",
-  "title": "Failure",
+  "title": "DiagnosticFinding",
   "type": "object",
-  "required": ["failure_id", "trace_id", "type", "severity", "message"],
+  "required": [
+    "finding_id",
+    "trace_id",
+    "detector_id",
+    "detection_type",
+    "severity",
+    "confidence",
+    "title",
+    "explanation",
+    "suggested_action",
+    "detector_version",
+    "provisional"
+  ],
   "properties": {
-    "failure_id": { "type": "string", "format": "uuid" },
+    "finding_id": { "type": "string", "format": "uuid" },
     "trace_id": { "type": "string", "format": "uuid" },
-    "span_id": { "type": ["string", "null"], "format": "uuid" },
-    "type": { "enum": ["loop", "tool_hallucination", "schema_mismatch", "runtime_error"] },
-    "severity": { "enum": ["info", "warning", "error"] },
-    "message": { "type": "string", "minLength": 1 },
-    "metadata": { "type": "object" }
+    "span_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "detector_id": { "type": "string", "minLength": 1 },
+    "detection_type": {
+      "enum": [
+        "tool_failure",
+        "repeated_tool_call",
+        "schema_mismatch",
+        "ineffective_recovery",
+        "stall",
+        "interruption",
+        "provider_error",
+        "latency_anomaly",
+        "token_anomaly",
+        "cost_anomaly"
+      ]
+    },
+    "severity": { "enum": ["info", "warning", "critical"] },
+    "confidence": { "enum": ["confirmed", "heuristic"] },
+    "title": { "type": "string", "minLength": 1 },
+    "explanation": { "type": "string", "minLength": 1 },
+    "evidence": { "type": "array", "items": { "type": "string" } },
+    "evidence_data": { "type": "object" },
+    "suggested_action": { "type": "string" },
+    "first_observed_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_observed_at": { "type": ["string", "null"], "format": "date-time" },
+    "detector_version": { "type": "string" },
+    "provisional": { "type": "boolean" }
   },
   "additionalProperties": false
 }

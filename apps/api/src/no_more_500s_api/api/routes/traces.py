@@ -4,6 +4,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from no_more_500s_api.core.config import get_settings
+from no_more_500s_api.domain.diagnostics import (
+    DetectionType,
+    DiagnosticSummary,
+    FindingConfidence,
+    FindingSeverity,
+    TraceDiagnostics,
+)
 from no_more_500s_api.domain.models import (
     RunEventIn,
     RunFinalize,
@@ -13,6 +21,12 @@ from no_more_500s_api.domain.models import (
     Trace,
     TraceCreate,
     TraceSummary,
+)
+from no_more_500s_api.services.diagnostics import (
+    analyze_trace,
+    context_from_settings,
+    filter_findings,
+    summarize_traces,
 )
 from no_more_500s_api.services.failure_detection import LoopFinding, detect_repeated_tool_calls
 from no_more_500s_api.services.run_reconstruction import InvalidLifecycleError
@@ -155,3 +169,91 @@ def get_trace_failures(trace_id: UUID, trace_repository: RepositoryDependency) -
     except TraceStorageError as error:
         raise _storage_http_error() from error
     return detect_repeated_tool_calls(trace)
+
+
+def _load_traces(
+    repository: TraceRepository,
+    query: TraceListQuery,
+) -> list[Trace]:
+    summaries = list(repository.list(query))
+    traces: list[Trace] = []
+    for summary in summaries:
+        try:
+            traces.append(repository.get(summary.trace_id))
+        except TraceNotFoundError:
+            continue
+    return traces
+
+
+def _bounded_limit(requested: int | None) -> int:
+    settings = get_settings()
+    default = max(1, min(50, settings.diagnostics_summary_limit))
+    if requested is None:
+        return default
+    return max(1, min(50, requested))
+
+
+@router.get("/diagnostics", response_model=DiagnosticSummary)
+def get_diagnostic_summary(
+    trace_repository: RepositoryDependency,
+    project_id: str | None = None,
+    status_filter: Annotated[SpanStatus | None, Query(alias="status")] = None,
+    lifecycle: RunLifecycle | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    limit: Annotated[int | None, Query(ge=1, le=50)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DiagnosticSummary:
+    """Analyze a bounded recent window of traces. Counts are not all-history."""
+    window = _bounded_limit(limit)
+    query = TraceListQuery(
+        project_id=project_id,
+        status=status_filter,
+        lifecycle=lifecycle,
+        started_after=started_after,
+        started_before=started_before,
+        limit=window,
+        offset=offset,
+    )
+    try:
+        traces = _load_traces(trace_repository, query)
+    except TraceStorageError as error:
+        raise _storage_http_error() from error
+    ctx = context_from_settings(peers=traces)
+    return summarize_traces(
+        traces,
+        ctx=ctx,
+        limit=window,
+        offset=offset,
+        project_id=project_id,
+    )
+
+
+@router.get("/traces/{trace_id}/diagnostics", response_model=TraceDiagnostics)
+def get_trace_diagnostics(
+    trace_id: UUID,
+    trace_repository: RepositoryDependency,
+    severity: FindingSeverity | None = None,
+    detection_type: DetectionType | None = None,
+    confidence: FindingConfidence | None = None,
+    span_id: UUID | None = None,
+) -> TraceDiagnostics:
+    try:
+        trace = trace_repository.get(trace_id)
+        peer_limit = _bounded_limit(None)
+        peers = _load_traces(
+            trace_repository,
+            TraceListQuery(project_id=trace.project_id, limit=peer_limit),
+        )
+    except TraceNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Trace not found") from error
+    except TraceStorageError as error:
+        raise _storage_http_error() from error
+    diagnostics = analyze_trace(trace, context_from_settings(peers=peers))
+    return filter_findings(
+        diagnostics,
+        severity=severity,
+        detection_type=detection_type,
+        confidence=confidence,
+        span_id=str(span_id) if span_id else None,
+    )

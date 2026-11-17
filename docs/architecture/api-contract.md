@@ -12,7 +12,9 @@ Base path: `/v1`
 | `GET` | `/v1/traces` | List trace summaries, newest first |
 | `GET` | `/v1/projects` | Distinct project IDs, sorted |
 | `GET` | `/v1/traces/{trace_id}` | Fetch a batch trace or reconstructed live run |
-| `GET` | `/v1/traces/{trace_id}/failures` | Repeated-tool-call findings for a stored trace |
+| `GET` | `/v1/traces/{trace_id}/failures` | Repeated-tool-call findings for a stored trace (`LoopFinding`, unchanged) |
+| `GET` | `/v1/traces/{trace_id}/diagnostics` | Unified diagnostic findings and coverage for one trace |
+| `GET` | `/v1/diagnostics` | Bounded recent-run diagnostic summary (not all history) |
 
 `GET /v1/traces` summaries include optional `source`, `agent_framework`,
 `provider`, `workspace`, `cost_status`, `token_status`, and
@@ -62,6 +64,16 @@ Errors use FastAPI's JSON error shape:
 ```json
 { "detail": "Trace not found" }
 ```
+
+`GET /v1/traces/{trace_id}/diagnostics` accepts optional `severity`,
+`detection_type`, `confidence`, and `span_id` filters. Missing traces are
+**404**; storage errors are **503**. Findings on `running` / `interrupted`
+traces set `provisional=true` and `analysis_status=provisional`.
+
+`GET /v1/diagnostics` analyzes at most `limit` recent listed traces (default
+`NM5_DIAGNOSTICS_SUMMARY_LIMIT`, maximum 50). The `analysis_scope` object
+reports `analyzed_run_count` and an explicit note that counts are not all
+historical data.
 
 The JSON Schemas in `packages/contracts/schemas` define transport payloads.
 OpenAPI documentation is generated at `/docs` when the API runs.

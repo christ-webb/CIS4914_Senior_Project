@@ -43,6 +43,71 @@ export interface Trace extends TraceSummary {
   spans: Span[];
 }
 
+export type FindingSeverity = "info" | "warning" | "critical";
+export type FindingConfidence = "confirmed" | "heuristic";
+export type DetectionType =
+  | "tool_failure"
+  | "repeated_tool_call"
+  | "schema_mismatch"
+  | "ineffective_recovery"
+  | "stall"
+  | "interruption"
+  | "provider_error"
+  | "latency_anomaly"
+  | "token_anomaly"
+  | "cost_anomaly";
+
+export interface DiagnosticFinding {
+  finding_id: string;
+  trace_id: string;
+  span_ids: string[];
+  detector_id: string;
+  detection_type: DetectionType;
+  severity: FindingSeverity;
+  confidence: FindingConfidence;
+  title: string;
+  explanation: string;
+  evidence: string[];
+  evidence_data: Record<string, unknown>;
+  suggested_action: string;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
+  detector_version: string;
+  provisional: boolean;
+}
+
+export interface InstrumentationCoverage {
+  token_status: string;
+  cost_status: string;
+  instrumentation_coverage: string | null;
+  unsupported_detectors: string[];
+  insufficient_data_detectors: string[];
+}
+
+export interface TraceDiagnostics {
+  trace_id: string;
+  analysis_status: "finalized" | "provisional";
+  coverage: InstrumentationCoverage;
+  findings: DiagnosticFinding[];
+}
+
+export interface DiagnosticSummary {
+  analysis_scope: {
+    limit: number;
+    offset: number;
+    project_id: string | null;
+    analyzed_run_count: number;
+    newest_started_at: string | null;
+    oldest_started_at: string | null;
+    note: string;
+  };
+  totals_by_severity: Record<string, number>;
+  totals_by_type: Record<string, number>;
+  affected_trace_count: number;
+  recent_findings: DiagnosticFinding[];
+  coverage_notes: string[];
+}
+
 export function traceLifecycle(trace: Pick<TraceSummary, "lifecycle" | "status">): RunLifecycle {
   if (trace.lifecycle) return trace.lifecycle;
   if (trace.status === "ok") return "completed";

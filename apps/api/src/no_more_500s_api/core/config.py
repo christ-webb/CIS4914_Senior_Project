@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     clickhouse_user: str = "default"
     clickhouse_password: str = ""
     run_inactivity_seconds: float = 120
+    diagnostics_summary_limit: int = 25
+    repeat_threshold: int = 3
+    recovery_threshold: int = 3
+    parameter_error_min: int = 2
+    span_latency_ms: float = 30_000
+    token_anomaly_threshold: int = 50_000
+    cost_anomaly_threshold: float = 1.0
+    historical_min_peers: int = 5
+    historical_anomaly_ratio: float = 3.0
 
     @property
     def allowed_origins(self) -> list[str]:

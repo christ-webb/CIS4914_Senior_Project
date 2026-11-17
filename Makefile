@@ -1,4 +1,4 @@
-.PHONY: bootstrap clickhouse api-dev web-dev collector demo test lint typecheck check
+.PHONY: bootstrap clickhouse api-dev web-dev collector demo demo-diagnostics test lint typecheck check
 
 bootstrap:
 	uv sync --all-packages --dev
@@ -15,6 +15,9 @@ web-dev:
 
 demo:
 	uv run --package no-more-500s-example python examples/simple-agent/main.py
+
+demo-diagnostics:
+	uv run --package no-more-500s-example python examples/simple-agent/diagnostic_demo.py
 
 test:
 	uv run pytest

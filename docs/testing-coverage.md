@@ -5,7 +5,14 @@ tests, without changing application behavior or another contributor's components
 
 ## Test layers
 
-- **Failure-analysis HTTP API** (`apps/api/tests/test_failure_api.py`): Tests the read-only\n  `GET /v1/traces/{trace_id}/failures` endpoint, repeated identical tool calls,\n  wasted token/cost estimates, empty findings, non-tool spans, 404/422 responses,\n  and preservation of original stored traces and trace summaries.\n- **API contract** (`apps/api/tests/test_api_contract.py`): Uses a fresh
+- **Failure-analysis HTTP API** (`apps/api/tests/test_failure_api.py`): Tests the read-only
+  `GET /v1/traces/{trace_id}/failures` endpoint, repeated identical tool calls,
+  wasted token/cost estimates, empty findings, non-tool spans, 404/422 responses,
+  and preservation of original stored traces and trace summaries.
+- **Diagnostics** (`apps/api/tests/test_diagnostics.py`, `test_diagnostics_api.py`):
+  Detector evidence rules, stable IDs, provisional vs confidence, coverage,
+  bounded summaries, and `/failures` compatibility.
+- **API contract** (`apps/api/tests/test_api_contract.py`): Uses a fresh
   `InMemoryTraceRepository` per test. Covers listing order and summaries,
   missing/malformed trace IDs, empty traces, valid parent/child relationships,
   and invalid payloads (including validation without accidental persistence).

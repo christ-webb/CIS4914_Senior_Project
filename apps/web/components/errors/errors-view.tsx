@@ -2,120 +2,134 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { EmptyState, LiveStatus, PageHeader } from "@/components/shell/page-header";
 import { usePolling } from "@/hooks/use-polling";
-import { fetchFullTraces } from "@/lib/api";
-import { extractErrors, groupErrors, type ErrorGroup } from "@/lib/analytics";
-import { formatMs } from "@/lib/stats";
+import { fetchDiagnosticSummary } from "@/lib/api";
+import { sortFindings } from "@/lib/diagnostics";
+import type { DiagnosticFinding, DiagnosticSummary } from "@/lib/types";
 
 export function ErrorsView() {
   const params = useSearchParams();
-  const { data, online, loading, updatedAt, refresh } = usePolling(fetchFullTraces, 15000);
-  const [picked, setPicked] = useState<string | null>(params.get("group"));
+  const load = useCallback(() => fetchDiagnosticSummary(25), []);
+  const { data, online, loading, updatedAt, refresh } = usePolling(load, 15000);
+  const [picked, setPicked] = useState<string | null>(params.get("finding"));
   const [query, setQuery] = useState("");
+  const [severity, setSeverity] = useState<"all" | "critical" | "warning" | "info">("all");
+  const [confidence, setConfidence] = useState<"all" | "confirmed" | "heuristic">("all");
 
-  const traces = useMemo(() => data ?? [], [data]);
-  const groups = useMemo(() => groupErrors(extractErrors(traces)), [traces]);
+  const summary = data;
+  const findings = useMemo(() => sortFindings(summary?.recent_findings ?? []), [summary]);
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return groups.filter((group) => !needle || `${group.name} ${group.message}`.toLowerCase().includes(needle));
-  }, [groups, query]);
-  const active = groups.find((group) => group.signature === picked) ?? shown[0] ?? null;
-  const failedRuns = traces.filter((trace) => trace.status === "error").length;
+    return findings.filter((finding) => {
+      if (severity !== "all" && finding.severity !== severity) return false;
+      if (confidence !== "all" && finding.confidence !== confidence) return false;
+      if (!needle) return true;
+      return `${finding.title} ${finding.explanation} ${finding.detection_type}`.toLowerCase().includes(needle);
+    });
+  }, [findings, query, severity, confidence]);
+  const active = findings.find((finding) => finding.finding_id === picked) ?? shown[0] ?? null;
 
   return (
     <>
       <PageHeader
         eyebrow="ERRORS"
         title="What's breaking, and where"
-        subtitle={`${groups.length} distinct error${groups.length === 1 ? "" : "s"} across ${failedRuns} failed run${failedRuns === 1 ? "" : "s"}.`}
+        subtitle={
+          summary
+            ? `${summary.analysis_scope.analyzed_run_count} recent runs analyzed. ${summary.analysis_scope.note}`
+            : "Loading diagnostic summary…"
+        }
         actions={<LiveStatus online={online} updatedAt={updatedAt} onRefresh={refresh} />}
       />
 
-      {!loading && traces.length === 0 ? (
+      {summary && <SummaryStats summary={summary} />}
+
+      {!loading && !summary ? (
         <EmptyState online={online} />
-      ) : groups.length === 0 && !loading ? (
-        <section className="empty-state"><h2>No errors 🎉</h2><p>None of the recent runs contain a failed span.</p></section>
+      ) : shown.length === 0 && !loading ? (
+        <section className="empty-state">
+          <h2>No diagnostic findings in this window</h2>
+          <p>The bounded recent-run analysis did not detect critical or warning findings.</p>
+        </section>
       ) : (
         <section className="explorer">
-          <aside className="card run-list" aria-label="Error groups">
-            <h3>Errors</h3>
-            <input className="search" type="search" placeholder="Search errors…" aria-label="Search errors" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <aside className="card run-list" aria-label="Diagnostic findings">
+            <h3>Findings</h3>
+            <input className="search" type="search" placeholder="Search findings…" aria-label="Search findings" value={query} onChange={(event) => setQuery(event.target.value)} />
+            <div className="toolbar-actions" style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+              <select className="search" value={severity} onChange={(event) => setSeverity(event.target.value as typeof severity)} aria-label="Filter severity">
+                <option value="all">All severities</option>
+                <option value="critical">Critical</option>
+                <option value="warning">Warning</option>
+                <option value="info">Info</option>
+              </select>
+              <select className="search" value={confidence} onChange={(event) => setConfidence(event.target.value as typeof confidence)} aria-label="Filter confidence">
+                <option value="all">All evidence</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="heuristic">Heuristic</option>
+              </select>
+            </div>
             <div className="run-scroll">
-              {shown.length === 0 && <p className="muted">No errors match.</p>}
-              {shown.map((group) => (
-                <button key={group.signature} className={active?.signature === group.signature ? "run active" : "run"} onClick={() => setPicked(group.signature)}>
-                  <span className="run-title"><i className="dot error" /><span>{group.name}</span><span className="count">{group.count}</span></span>
-                  <small className="muted clamp">{group.message}</small>
-                  <small className="muted">last seen {new Date(group.lastSeen).toLocaleTimeString()}</small>
+              {shown.length === 0 && <p className="muted">No findings match.</p>}
+              {shown.map((finding) => (
+                <button key={finding.finding_id} className={active?.finding_id === finding.finding_id ? "run active" : "run"} onClick={() => setPicked(finding.finding_id)}>
+                  <span className="run-title">
+                    <span className={`pill ${finding.severity}`}>{finding.severity}</span>
+                    <span>{finding.title}</span>
+                  </span>
+                  <small className="muted clamp">{finding.detection_type} · {finding.confidence}</small>
                 </button>
               ))}
             </div>
           </aside>
-          <div className="card trace-panel">{active ? <ErrorDetail group={active} /> : <p className="muted">Select an error to see its details.</p>}</div>
+          <div className="card trace-panel">{active ? <FindingOverview finding={active} /> : <p className="muted">Select a finding.</p>}</div>
         </section>
       )}
     </>
   );
 }
 
-function ErrorDetail({ group }: { group: ErrorGroup }) {
-  const latest = group.events[0];
+function SummaryStats({ summary }: { summary: DiagnosticSummary }) {
+  const types = Object.entries(summary.totals_by_type).sort((a, b) => b[1] - a[1]);
   return (
-    <div className="error-detail">
-      <p className="eyebrow">{group.type.toUpperCase()} ERROR</p>
-      <h2>{group.name}</h2>
-      <p className="error-message">{group.message}</p>
-
-      <dl className="mini-stats">
-        <div><dt>Occurrences</dt><dd>{group.count}</dd></div>
-        <div><dt>Affected runs</dt><dd>{group.traceIds.length}</dd></div>
-        <div><dt>First seen</dt><dd>{new Date(group.firstSeen).toLocaleString()}</dd></div>
-        <div><dt>Last seen</dt><dd>{new Date(group.lastSeen).toLocaleString()}</dd></div>
-      </dl>
-
-      <h4>Failure path (latest occurrence)</h4>
-      <ol className="path">
-        {latest.path.map((span, index) => (
-          <li key={span.span_id} className={index === latest.path.length - 1 ? "failed" : ""}>
-            <span className={`type-pill t-${span.type}`}>{span.type}</span> {span.name}
-            <small className="muted"> {formatMs(span.duration_ms)}</small>
-          </li>
-        ))}
-      </ol>
-
-      <h4>Latest payload</h4>
-      <div className="payload">
-        <Payload label="Input" value={latest.span.input} />
-        <Payload label="Output" value={latest.span.output} />
-        <Payload label="Attributes" value={Object.keys(latest.span.attributes).length ? latest.span.attributes : null} />
-      </div>
-
-      <h4>Occurrences</h4>
-      <table className="table">
-        <thead><tr><th>When</th><th>Run</th><th>Project</th><th>Duration</th></tr></thead>
-        <tbody>
-          {group.events.slice(0, 20).map((event) => (
-            <tr key={event.span.span_id}>
-              <td className="muted">{new Date(event.at).toLocaleString()}</td>
-              <td><Link href={`/traces/${event.traceId}`} className="row-link">{event.traceName}</Link></td>
-              <td className="muted">{event.projectId}</td>
-              <td className="num">{formatMs(event.span.duration_ms)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <section className="kpis" aria-label="Diagnostic summary">
+      <article className="card kpi"><div><span className="kpi-label">Findings (window)</span><strong>{Object.values(summary.totals_by_severity).reduce((a, b) => a + b, 0)}</strong></div></article>
+      <article className="card kpi"><div><span className="kpi-label">Critical</span><strong>{summary.totals_by_severity.critical ?? 0}</strong></div></article>
+      <article className="card kpi"><div><span className="kpi-label">Warning</span><strong>{summary.totals_by_severity.warning ?? 0}</strong></div></article>
+      <article className="card kpi"><div><span className="kpi-label">Affected runs</span><strong>{summary.affected_trace_count}</strong></div></article>
+      <article className="card kpi">
+        <div>
+          <span className="kpi-label">Most common types</span>
+          <small className="muted">{types.length ? types.map(([name, count]) => `${name} (${count})`).join(" · ") : "None"}</small>
+        </div>
+      </article>
+    </section>
   );
 }
 
-function Payload({ label, value }: { label: string; value: unknown }) {
+function FindingOverview({ finding }: { finding: DiagnosticFinding }) {
   return (
-    <div>
-      <span className="kpi-label">{label}</span>
-      <pre>{value == null ? "—" : JSON.stringify(value, null, 2)}</pre>
+    <div className="error-detail">
+      <p className="eyebrow">{finding.detection_type.replaceAll("_", " ").toUpperCase()}</p>
+      <h2>{finding.title}</h2>
+      <p>
+        <span className={`pill ${finding.severity}`}>{finding.severity}</span>{" "}
+        <span className={`pill ${finding.confidence}`}>{finding.confidence}</span>
+        {finding.provisional && <span className="pill interrupted">provisional</span>}
+      </p>
+      <p className="error-message">{finding.explanation}</p>
+      <h4>Evidence</h4>
+      <ul>{finding.evidence.map((line) => <li key={line}>{line}</li>)}</ul>
+      <h4>Suggested investigation</h4>
+      <p>{finding.suggested_action}</p>
+      <p>
+        <Link className="row-link" href={`/traces/${finding.trace_id}?finding=${finding.finding_id}`}>
+          Open execution trace →
+        </Link>
+      </p>
     </div>
   );
 }

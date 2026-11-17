@@ -1,5 +1,5 @@
 import { buildTraceListPath, type TraceListParams } from "@/lib/history";
-import type { Trace, TraceSummary } from "@/lib/types";
+import type { DiagnosticSummary, Trace, TraceDiagnostics, TraceSummary } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -19,6 +19,14 @@ export function fetchProjects(): Promise<string[]> {
 
 export function getTrace(traceId: string): Promise<Trace> {
   return apiFetch<Trace>(`/v1/traces/${traceId}`);
+}
+
+export function getTraceDiagnostics(traceId: string): Promise<TraceDiagnostics> {
+  return apiFetch<TraceDiagnostics>(`/v1/traces/${traceId}/diagnostics`);
+}
+
+export function fetchDiagnosticSummary(limit = 25): Promise<DiagnosticSummary> {
+  return apiFetch<DiagnosticSummary>(`/v1/diagnostics?limit=${limit}`);
 }
 
 const FULL_TRACE_LIMIT = 60;
