@@ -15,7 +15,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { computeTimeline, layoutSpans, mergeLayoutPositions, NODE_H, NODE_W } from "@/lib/layout";
-import { formatCost, formatMs } from "@/lib/stats";
+import { formatCost, formatCostLabel, formatMs, formatTokenLabel } from "@/lib/stats";
 import { isActiveLifecycle, traceLifecycle, type Span, type Trace } from "@/lib/types";
 
 type SpanNodeData = { span: Span; maxDuration: number };
@@ -95,15 +95,53 @@ export function TraceView({ trace }: { trace: Trace }) {
           <p className="muted">
             <span className={`pill ${lifecycle}`}>{lifecycle}</span>{" "}
             <span className={`pill ${trace.status}`}>{trace.status}</span>{" "}
-            {new Date(trace.started_at).toLocaleString()} · {trace.spans.length} spans
+            {typeof trace.attributes?.["nm5.source"] === "string" && (
+              <span className="pill">{String(trace.attributes["nm5.source"])}</span>
+            )}{" "}
+            {typeof trace.attributes?.["gen_ai.provider"] === "string" && (
+              <span className="pill">{String(trace.attributes["gen_ai.provider"])}</span>
+            )}{" "}
+            {typeof trace.attributes?.["agent.framework"] === "string" && (
+              <span className="pill">{String(trace.attributes["agent.framework"])}</span>
+            )}{" "}
+            {new Date(trace.started_at).toLocaleString()}
+            {trace.ended_at ? ` → ${new Date(trace.ended_at).toLocaleString()}` : ""}
+            {" · "}
+            {trace.spans.length} spans
             {errors > 0 && ` · ${errors} failed`}
             {live && " · live"}
           </p>
+          {typeof trace.attributes?.["nm5.coverage"] === "string" && (
+            <p className="muted">Instrumentation: {String(trace.attributes["nm5.coverage"])}</p>
+          )}
+          {typeof trace.attributes?.["nm5.workspace"] === "string" && (
+            <p className="muted">Workspace: {String(trace.attributes["nm5.workspace"])}</p>
+          )}
         </div>
         <dl className="mini-stats">
           <div><dt>Duration</dt><dd>{formatMs(trace.duration_ms)}</dd></div>
-          <div><dt>Tokens</dt><dd>{trace.total_tokens.toLocaleString()}</dd></div>
-          <div><dt>Cost</dt><dd>{formatCost(trace.total_cost_usd)}</dd></div>
+          <div>
+            <dt>Tokens</dt>
+            <dd>
+              {formatTokenLabel(
+                trace.total_tokens,
+                typeof trace.attributes?.["nm5.token_status"] === "string"
+                  ? String(trace.attributes["nm5.token_status"])
+                  : null,
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Cost</dt>
+            <dd>
+              {formatCostLabel(
+                trace.total_cost_usd,
+                typeof trace.attributes?.["nm5.cost_status"] === "string"
+                  ? String(trace.attributes["nm5.cost_status"])
+                  : null,
+              )}
+            </dd>
+          </div>
         </dl>
       </div>
 

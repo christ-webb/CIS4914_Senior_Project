@@ -102,6 +102,14 @@ class Trace(TraceCreate):
         )
 
 
+def _attr_str(attributes: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = attributes.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 class TraceSummary(BaseModel):
     trace_id: UUID
     project_id: str
@@ -114,10 +122,27 @@ class TraceSummary(BaseModel):
     lifecycle: RunLifecycle = RunLifecycle.UNKNOWN
     last_activity_at: datetime | None = None
     ended_at: datetime | None = None
+    source: str | None = None
+    agent_framework: str | None = None
+    provider: str | None = None
+    workspace: str | None = None
+    cost_status: str | None = None
+    token_status: str | None = None
+    instrumentation_coverage: str | None = None
 
     @classmethod
     def from_trace(cls, trace: Trace) -> "TraceSummary":
-        return cls(**trace.model_dump(exclude={"spans", "attributes"}))
+        attributes = trace.attributes
+        return cls(
+            **trace.model_dump(exclude={"spans", "attributes"}),
+            source=_attr_str(attributes, "nm5.source"),
+            agent_framework=_attr_str(attributes, "agent.framework", "nm5.agent"),
+            provider=_attr_str(attributes, "gen_ai.provider"),
+            workspace=_attr_str(attributes, "nm5.workspace"),
+            cost_status=_attr_str(attributes, "nm5.cost_status"),
+            token_status=_attr_str(attributes, "nm5.token_status"),
+            instrumentation_coverage=_attr_str(attributes, "nm5.coverage"),
+        )
 
 
 class RunStart(BaseModel):

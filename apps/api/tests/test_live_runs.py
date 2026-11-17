@@ -31,6 +31,30 @@ def _start(client: TestClient, **overrides: object) -> dict:
     return response.json()
 
 
+def test_external_run_summary_copies_source_metadata(client: TestClient) -> None:
+    created = _start(
+        client,
+        attributes={
+            "nm5.source": "cli",
+            "agent.framework": "codex",
+            "gen_ai.provider": "openai",
+            "nm5.workspace": "demo",
+            "nm5.cost_status": "unavailable",
+            "nm5.token_status": "unavailable",
+            "nm5.coverage": "lifecycle+tools",
+        },
+    )
+    listing = client.get("/v1/traces")
+    row = next(item for item in listing.json() if item["trace_id"] == created["trace_id"])
+    assert row["source"] == "cli"
+    assert row["agent_framework"] == "codex"
+    assert row["provider"] == "openai"
+    assert row["workspace"] == "demo"
+    assert row["cost_status"] == "unavailable"
+    assert row["token_status"] == "unavailable"
+    assert row["instrumentation_coverage"] == "lifecycle+tools"
+
+
 def test_start_run_is_immediately_retrievable(client: TestClient) -> None:
     created = _start(client)
     assert created["lifecycle"] == "running"

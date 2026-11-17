@@ -200,7 +200,12 @@ export function TraceExplorer() {
                 >
                   <span>{trace.name}</span>
                   <small>
-                    {trace.project_id} · {traceLifecycle(trace)} · {formatMs(trace.duration_ms)}
+                    {trace.project_id}
+                    {trace.source ? ` · ${trace.source}` : ""}
+                    {trace.provider ? ` · ${trace.provider}` : ""}
+                    {trace.workspace ? ` · ${trace.workspace}` : ""}
+                    {" · "}
+                    {traceLifecycle(trace)} · {formatMs(trace.duration_ms)}
                   </small>
                 </button>
               ))}

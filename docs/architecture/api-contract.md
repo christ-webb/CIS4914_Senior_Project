@@ -14,6 +14,12 @@ Base path: `/v1`
 | `GET` | `/v1/traces/{trace_id}` | Fetch a batch trace or reconstructed live run |
 | `GET` | `/v1/traces/{trace_id}/failures` | Repeated-tool-call findings for a stored trace |
 
+`GET /v1/traces` summaries include optional `source`, `agent_framework`,
+`provider`, `workspace`, `cost_status`, `token_status`, and
+`instrumentation_coverage` copied from run attributes. Missing fields mean the
+run was not marked as an external CLI session. `cost_status=unavailable` is not
+the same as a reported zero cost.
+
 `POST /v1/traces` remains first-write-wins and unchanged. Live runs use the
 append-only event log described in ADR 0004. Each live event carries a stable
 `event_id` (idempotency), client `sequence` (apply order), `occurred_at`

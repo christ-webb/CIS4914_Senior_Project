@@ -29,6 +29,13 @@ export interface TraceSummary {
   lifecycle?: RunLifecycle;
   last_activity_at?: string | null;
   ended_at?: string | null;
+  source?: string | null;
+  agent_framework?: string | null;
+  provider?: string | null;
+  workspace?: string | null;
+  cost_status?: string | null;
+  token_status?: string | null;
+  instrumentation_coverage?: string | null;
 }
 
 export interface Trace extends TraceSummary {

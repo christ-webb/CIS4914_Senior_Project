@@ -1,4 +1,4 @@
-.PHONY: bootstrap clickhouse api-dev web-dev demo test lint typecheck check
+.PHONY: bootstrap clickhouse api-dev web-dev collector demo test lint typecheck check
 
 bootstrap:
 	uv sync --all-packages --dev
@@ -24,8 +24,11 @@ lint:
 	uv run ruff check .
 	npm --prefix apps/web run lint
 
+collector:
+	uv run --package no-more-500s-collector nm5-collector
+
 typecheck:
-	uv run mypy apps/api/src packages/python-sdk/src
+	uv run mypy apps/api/src packages/python-sdk/src packages/collector/src
 	npm --prefix apps/web run typecheck
 
 check: lint typecheck test

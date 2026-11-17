@@ -12,6 +12,8 @@ analytics.
 flowchart LR
     A[Example agent] --> B[Python SDK]
     B --> C[FastAPI]
+    H[Codex CLI hooks] --> I[Collector]
+    I --> C
     C --> D[Trace repository]
     D --> E[Query API]
     E --> F[Next.js dashboard]

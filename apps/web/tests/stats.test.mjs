@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { computeStats, filterTraces } from "../lib/stats.ts";
+import { computeStats, filterTraces, formatCostLabel, formatTokenLabel } from "../lib/stats.ts";
 
 const make = (name, status, duration_ms, tokens, cost) => ({
   trace_id: name,
@@ -27,6 +27,16 @@ test("computeStats aggregates runs", () => {
 
 test("computeStats handles empty input", () => {
   assert.equal(computeStats([]).errorRate, 0);
+});
+
+test("formatCostLabel distinguishes unavailable cost", () => {
+  assert.equal(formatCostLabel(0, "unavailable"), "not reported");
+  assert.equal(formatCostLabel(0, "reported"), "$0.0000");
+});
+
+test("formatTokenLabel distinguishes unavailable tokens", () => {
+  assert.equal(formatTokenLabel(0, "unavailable"), "not reported");
+  assert.equal(formatTokenLabel(0, "reported"), "0");
 });
 
 test("filterTraces filters by status and query", () => {

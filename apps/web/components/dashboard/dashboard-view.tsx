@@ -8,7 +8,7 @@ import { Donut, LatencyBars, Sparkline } from "@/components/dashboard/charts";
 import { EmptyState, LiveStatus, PageHeader } from "@/components/shell/page-header";
 import { usePolling } from "@/hooks/use-polling";
 import { fetchTraces } from "@/lib/api";
-import { computeStats, formatCompact, formatCost, formatMs, recentTraces, statusCounts } from "@/lib/stats";
+import { computeStats, formatCompact, formatCost, formatCostLabel, formatMs, formatTokenLabel, recentTraces, statusCounts } from "@/lib/stats";
 import { isActiveLifecycle, traceLifecycle, type TraceSummary } from "@/lib/types";
 
 function elapsedLabel(trace: TraceSummary, nowMs: number): string {
@@ -115,6 +115,10 @@ export function DashboardView() {
                       <span>
                         <strong>{trace.name}</strong>
                         <small className="muted"> {trace.project_id}</small>
+                        {trace.source && <span className="pill">{trace.source}</span>}
+                        {trace.provider && <span className="pill">{trace.provider}</span>}
+                        {trace.agent_framework && <span className="pill">{trace.agent_framework}</span>}
+                        {trace.workspace && <small className="muted"> {trace.workspace}</small>}
                       </span>
                       <span className="muted">
                         <span className={`pill ${lifecycle}`}>{lifecycle}</span>{" "}
@@ -148,7 +152,7 @@ export function DashboardView() {
               </div>
               <table className="table">
                 <thead>
-                  <tr><th>Run</th><th>Project</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Cost</th><th>Started</th></tr>
+                  <tr><th>Run</th><th>Project</th><th>Source</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Cost</th><th>Started</th></tr>
                 </thead>
                 <tbody>
                   {latest.map((trace) => {
@@ -157,13 +161,14 @@ export function DashboardView() {
                       <tr key={trace.trace_id}>
                         <td><Link href={`/traces/${trace.trace_id}`} className="row-link">{trace.name}</Link></td>
                         <td className="muted">{trace.project_id}</td>
+                        <td className="muted">{trace.source ?? "sdk"}{trace.provider ? ` · ${trace.provider}` : ""}</td>
                         <td><span className={`pill ${lifecycle}`}>{lifecycle}</span></td>
                         <td className="num">
                           {elapsedLabel(trace, nowMs)}
                           <span className="run-bar inline"><i className={trace.status} style={{ width: `${(trace.duration_ms / maxDuration) * 100}%` }} /></span>
                         </td>
-                        <td className="num">{trace.total_tokens.toLocaleString()}</td>
-                        <td className="num">{formatCost(trace.total_cost_usd)}</td>
+                        <td className="num">{formatTokenLabel(trace.total_tokens, trace.token_status)}</td>
+                        <td className="num">{formatCostLabel(trace.total_cost_usd, trace.cost_status)}</td>
                         <td className="muted">{new Date(trace.started_at).toLocaleTimeString()}</td>
                       </tr>
                     );

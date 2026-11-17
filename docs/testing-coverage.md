@@ -26,6 +26,10 @@ tests, without changing application behavior or another contributor's components
   reconstruction ordering.
 - **Live SDK** (`packages/python-sdk/tests/test_live_client.py`): context
   managers, stable event IDs across retries, and telemetry vs agent errors.
+- **External collector** (`packages/collector/tests`): Codex hook mapping,
+  redaction, duplicate delivery, Stop vs finalize, hook install merge,
+  collector auth, and SQLite replay after restart. Live Codex
+  (`test_live_codex.py`) is skipped unless `NM5_TEST_CODEX=1`.
 
 ## Run checks from the repository root
 
@@ -34,7 +38,7 @@ uv sync --all-packages --dev
 uv run pytest apps/api/tests/test_api_contract.py apps/api/tests/test_trace_integration_regressions.py apps/api/tests/test_failure_api.py packages/python-sdk/tests/test_client.py
 uv run pytest
 uv run ruff check .
-uv run mypy apps/api/src packages/python-sdk/src
+uv run mypy apps/api/src packages/python-sdk/src packages/collector/src
 ```
 
 The regular `uv run pytest` command skips the live ClickHouse suite unless

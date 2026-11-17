@@ -73,6 +73,22 @@ export function formatCost(usd: number): string {
   return `$${usd.toFixed(usd >= 1 ? 2 : 4)}`;
 }
 
+export function formatCostLabel(
+  usd: number,
+  costStatus?: string | null,
+): string {
+  if (costStatus === "unavailable") return "not reported";
+  return formatCost(usd);
+}
+
+export function formatTokenLabel(
+  tokens: number,
+  tokenStatus?: string | null,
+): string {
+  if (tokenStatus === "unavailable") return "not reported";
+  return tokens.toLocaleString();
+}
+
 export function formatCompact(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
