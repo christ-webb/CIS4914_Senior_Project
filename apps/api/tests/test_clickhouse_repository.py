@@ -7,7 +7,14 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from no_more_500s_api.core.config import Settings
-from no_more_500s_api.domain.models import Span, SpanType, TraceCreate
+from no_more_500s_api.domain.models import (
+    RunEventIn,
+    RunStart,
+    Span,
+    SpanStatus,
+    SpanType,
+    TraceCreate,
+)
 from no_more_500s_api.main import create_app
 from no_more_500s_api.services.clickhouse_trace_repository import ClickHouseTraceRepository
 from no_more_500s_api.services.trace_service import (
@@ -274,3 +281,104 @@ def test_clickhouse_filters_before_limit() -> None:
         )
     page = list(repo.list(TraceListQuery(project_id=project, limit=1, offset=0)))
     assert [row.name for row in page] == ["keep-new"]
+
+
+def test_live_run_survives_api_restart_and_does_not_corrupt_batch() -> None:
+    project = f"live-{uuid4()}"
+    batch_project = f"batch-{uuid4()}"
+    with TestClient(create_app(repository())) as client:
+        batch = client.post(
+            "/v1/traces",
+            json=_payload(batch_project, "historical", datetime.now(UTC)),
+        )
+        assert batch.status_code == 201, batch.text
+        batch_id = batch.json()["trace_id"]
+        started = client.post(
+            "/v1/runs",
+            json={"project_id": project, "name": "live-one", "agent_name": "agent"},
+        )
+        assert started.status_code == 201, started.text
+        trace_id = started.json()["trace_id"]
+        agent_id = started.json()["spans"][0]["span_id"]
+        appended = client.post(
+            f"/v1/runs/{trace_id}/events",
+            json=[{
+                "event_type": "span_complete",
+                "sequence": 1,
+                "span_id": agent_id,
+                "status": "ok",
+                "token_count": 4,
+                "duration_ms": 8,
+            }],
+        )
+        assert appended.status_code == 200, appended.text
+
+    with TestClient(create_app(repository())) as client:
+        live = client.get(f"/v1/traces/{trace_id}").json()
+        assert live["lifecycle"] == "running"
+        assert live["total_tokens"] == 4
+        historical = client.get(f"/v1/traces/{batch_id}").json()
+        assert historical["name"] == "historical"
+        assert historical["lifecycle"] == "unknown"
+        done = client.post(
+            f"/v1/runs/{trace_id}/finalize",
+            json={"status": "completed", "sequence": 2},
+        )
+        assert done.status_code == 200
+        assert done.json()["lifecycle"] == "completed"
+
+    with TestClient(create_app(repository())) as client:
+        assert client.get(f"/v1/traces/{trace_id}").json()["lifecycle"] == "completed"
+        replay = client.post(
+            f"/v1/runs/{trace_id}/events",
+            json=[{
+                "event_type": "heartbeat",
+                "sequence": 9,
+                "progress": "too-late",
+            }],
+        )
+        assert replay.status_code == 409
+
+
+def test_clickhouse_retry_after_event_insert_fault_is_idempotent() -> None:
+    repo = repository()
+    started = repo.start_run(
+        RunStart(
+            project_id=f"fault-{uuid4()}",
+            name="partial",
+            agent_name="agent",
+        )
+    )
+
+    first = RunEventIn(
+        event_type="span_complete",
+        sequence=1,
+        span_id=uuid4(),
+        type=SpanType.LLM,
+        name="one",
+        status=SpanStatus.OK,
+        token_count=2,
+        duration_ms=1,
+    )
+    second = RunEventIn(
+        event_type="span_complete",
+        sequence=2,
+        span_id=uuid4(),
+        type=SpanType.TOOL,
+        name="two",
+        status=SpanStatus.OK,
+        token_count=3,
+        duration_ms=1,
+    )
+    repo.fail_after_event_insert = repo._new_event_inserts + 1
+    with pytest.raises(TraceStorageError):
+        repo.append_events(started.trace_id, [first, second])
+    mid = repo.get(started.trace_id)
+    assert any(span.name == "one" for span in mid.spans)
+    assert not any(span.name == "two" for span in mid.spans)
+    repo.fail_after_event_insert = None
+    repaired = repo.append_events(started.trace_id, [first, second])
+    assert repaired.total_tokens == 5
+    names = {span.name for span in repaired.spans}
+    assert names >= {"agent", "one", "two"}
+

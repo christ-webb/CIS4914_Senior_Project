@@ -1,42 +1,41 @@
 import os
-from time import perf_counter
+import time
 
-from nomore500s import NoMore500sClient, SpanData, TraceData
+from nomore500s import NoMore500sClient
 
 
 def fake_search(query: str) -> list[str]:
+    time.sleep(1.5)
     return [f"Result for {query}"]
 
 
 def main() -> None:
-    started = perf_counter()
-    results = fake_search("agent observability")
-    elapsed_ms = (perf_counter() - started) * 1_000
-
-    trace = TraceData(
+    api_url = os.environ.get("NM5_API_URL", "http://localhost:8000")
+    delay = float(os.environ.get("NM5_DEMO_DELAY_SECONDS", "1.5"))
+    client = NoMore500sClient(
+        api_url=api_url,
+        trust_environment=False,
+        heartbeat_seconds=min(5.0, max(delay, 0.5)),
+    )
+    with client.start_run(
         project_id="simple-agent",
         name="research request",
-        status="ok",
-        spans=[
-            SpanData(
-                type="agent",
-                name="research-agent",
-                duration_ms=elapsed_ms + 30,
-                status="ok",
-            ),
-            SpanData(
-                type="tool",
-                name="search",
-                duration_ms=elapsed_ms,
-                status="ok",
-                input={"query": "agent observability"},
-                output={"results": results},
-            ),
-        ],
-    )
-    api_url = os.environ.get("NM5_API_URL", "http://localhost:8000")
-    stored = NoMore500sClient(api_url=api_url, trust_environment=False).send_trace(trace)
-    print(f"Sent trace {stored['trace_id']} to {api_url}")
+        agent_name="research-agent",
+        agent_input={"query": "agent observability"},
+    ) as run:
+        time.sleep(delay)
+        with run.llm("plan-search", input={"task": "research"}) as llm:
+            time.sleep(delay)
+            llm.output = {"plan": "search then summarize"}
+            llm.token_count = 12
+            llm.cost_usd = 0.001
+        with run.tool("search", input={"query": "agent observability"}) as tool:
+            results = fake_search("agent observability")
+            tool.output = {"results": results}
+        time.sleep(delay)
+        print(f"Live run {run.trace_id} finalized toward {api_url}")
+        if run.telemetry_errors:
+            print(f"Telemetry delivery issues: {len(run.telemetry_errors)}")
 
 
 if __name__ == "__main__":

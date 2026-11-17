@@ -20,8 +20,9 @@ test("buildTraceListPath encodes filters and pagination", () => {
       started_after: "2026-01-01T00:00:00.000Z",
       limit: 21,
       offset: 20,
+      lifecycle: "running",
     }),
-    "/v1/traces?project_id=demo&status=error&started_after=2026-01-01T00%3A00%3A00.000Z&limit=21&offset=20",
+    "/v1/traces?project_id=demo&status=error&lifecycle=running&started_after=2026-01-01T00%3A00%3A00.000Z&limit=21&offset=20",
   );
 });
 

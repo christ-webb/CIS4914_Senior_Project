@@ -15,7 +15,7 @@ import {
   type TraceListParams,
 } from "@/lib/history";
 import { formatMs } from "@/lib/stats";
-import type { SpanStatus, TraceSummary } from "@/lib/types";
+import { isActiveLifecycle, traceLifecycle, type SpanStatus, type TraceSummary } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 const STATUSES: Array<"all" | SpanStatus> = ["all", "ok", "error", "unset"];
@@ -70,8 +70,9 @@ export function TraceExplorer() {
     return { projects: projectNames, traces: windowed.items, hasMore: windowed.hasMore };
   }, [filters, page]);
 
-  const { data, online, loading, updatedAt, refresh } = usePolling(loadHistory, 10000);
-  const traces = data?.traces ?? [];
+  const [historyInterval, setHistoryInterval] = useState(10000);
+  const { data, online, loading, updatedAt, refresh } = usePolling(loadHistory, historyInterval);
+  const traces = useMemo(() => data?.traces ?? [], [data]);
   const projects = data?.projects ?? [];
   const hasMore = data?.hasMore ?? false;
   const activeId = traces.some((trace) => trace.trace_id === pickedId)
@@ -82,7 +83,12 @@ export function TraceExplorer() {
     if (!activeId) return null;
     return getTrace(activeId);
   }, [activeId]);
-  const detail = usePolling(loadDetail, 10000);
+  const [detailInterval, setDetailInterval] = useState(10000);
+  const detail = usePolling(loadDetail, detailInterval);
+  const nextHistory = traces.some((trace) => isActiveLifecycle(traceLifecycle(trace))) ? 2000 : 10000;
+  if (nextHistory !== historyInterval) setHistoryInterval(nextHistory);
+  const nextDetail = detail.data && !isActiveLifecycle(traceLifecycle(detail.data)) ? 0 : 2000;
+  if (nextDetail !== detailInterval) setDetailInterval(nextDetail);
 
   const replaceParams = useCallback(
     (patch: Record<string, string | undefined>) => {
@@ -194,7 +200,7 @@ export function TraceExplorer() {
                 >
                   <span>{trace.name}</span>
                   <small>
-                    {trace.project_id} · {trace.status} · {formatMs(trace.duration_ms)}
+                    {trace.project_id} · {traceLifecycle(trace)} · {formatMs(trace.duration_ms)}
                   </small>
                 </button>
               ))}

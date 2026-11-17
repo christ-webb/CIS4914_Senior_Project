@@ -43,16 +43,21 @@ make api-dev
 make web-dev
 ```
 
-Then send the deterministic example trace (run it more than once; earlier runs
-stay in history):
+Then send the deterministic live example (it sleeps between steps so the
+dashboard can show the run while it is still executing). Run it more than once;
+earlier runs stay in history:
 
 ```bash
 make demo
 ```
 
-Open `http://localhost:3000` for the latest runs and
-`http://localhost:3000/explorer` for filterable history. API documentation is
-available at `http://localhost:8000/docs`.
+Open `http://localhost:3000` while the demo is running: an **Active runs** row
+should appear before the process exits. After it finishes, the same trace stays
+in Recent runs and Trace Explorer. API documentation is at
+`http://localhost:8000/docs`.
+
+With Gemini credentials, `uv run --package no-more-500s-example python examples/simple-agent/gemini_agent.py`
+uses the same live SDK against the real model.
 
 `NM5_TRACE_REPOSITORY` defaults to `clickhouse`. Isolated unit tests inject the
 in-memory repository and do not use Docker. Set

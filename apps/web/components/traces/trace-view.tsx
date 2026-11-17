@@ -14,9 +14,9 @@ import {
 } from "@xyflow/react";
 import { useMemo, useState } from "react";
 
-import { computeTimeline, layoutSpans, NODE_H, NODE_W } from "@/lib/layout";
+import { computeTimeline, layoutSpans, mergeLayoutPositions, NODE_H, NODE_W } from "@/lib/layout";
 import { formatCost, formatMs } from "@/lib/stats";
-import type { Span, Trace } from "@/lib/types";
+import { isActiveLifecycle, traceLifecycle, type Span, type Trace } from "@/lib/types";
 
 type SpanNodeData = { span: Span; maxDuration: number };
 type SpanNode = Node<SpanNodeData, "span">;
@@ -40,8 +40,12 @@ function SpanNodeView({ data, selected }: NodeProps<SpanNode>) {
 
 const nodeTypes = { span: SpanNodeView };
 
-export function toGraph(spans: Span[], activeId: string | null): { nodes: SpanNode[]; edges: Edge[] } {
-  const layout = layoutSpans(spans);
+export function toGraph(
+  spans: Span[],
+  activeId: string | null,
+  previousPositions: Record<string, { x: number; y: number }> = {},
+): { nodes: SpanNode[]; edges: Edge[] } {
+  const layout = mergeLayoutPositions(previousPositions, layoutSpans(spans));
   const maxDuration = Math.max(1, ...spans.map((span) => span.duration_ms));
   const byId = new Map(spans.map((span) => [span.span_id, span]));
   const nodes: SpanNode[] = spans.map((span) => ({
@@ -72,19 +76,28 @@ const TAB_LABELS: Record<Tab, string> = { graph: "Execution graph", timeline: "T
 export function TraceView({ trace }: { trace: Trace }) {
   const [tab, setTab] = useState<Tab>("graph");
   const [activeId, setActiveId] = useState<string | null>(null);
-  const graph = useMemo(() => toGraph(trace.spans, activeId), [trace.spans, activeId]);
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const graph = useMemo(() => toGraph(trace.spans, activeId, positions), [trace.spans, activeId, positions]);
+  const nextPositions = Object.fromEntries(graph.nodes.map((node) => [node.id, node.position]));
+  if (JSON.stringify(nextPositions) !== JSON.stringify(positions)) {
+    setPositions(nextPositions);
+  }
   const timeline = useMemo(() => computeTimeline(trace.spans), [trace.spans]);
   const active = trace.spans.find((span) => span.span_id === activeId) ?? null;
   const errors = trace.spans.filter((span) => span.status === "error").length;
+  const lifecycle = traceLifecycle(trace);
+  const live = isActiveLifecycle(lifecycle);
 
   return (
     <div className="trace-view">
       <div className="trace-heading">
         <div>
           <p className="muted">
+            <span className={`pill ${lifecycle}`}>{lifecycle}</span>{" "}
             <span className={`pill ${trace.status}`}>{trace.status}</span>{" "}
             {new Date(trace.started_at).toLocaleString()} · {trace.spans.length} spans
             {errors > 0 && ` · ${errors} failed`}
+            {live && " · live"}
           </p>
         </div>
         <dl className="mini-stats">
@@ -112,6 +125,7 @@ export function TraceView({ trace }: { trace: Trace }) {
                 nodeTypes={nodeTypes}
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
+                minZoom={0.4}
                 nodesDraggable={false}
                 colorMode="dark"
                 onNodeClick={(_, node) => setActiveId(node.id)}

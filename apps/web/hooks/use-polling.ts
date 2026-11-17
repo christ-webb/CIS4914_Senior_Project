@@ -11,7 +11,11 @@ export interface Polled<T> {
 }
 
 // `load` must be referentially stable (module-level function or useCallback).
-export function usePolling<T>(load: () => Promise<T>, intervalMs = 5000): Polled<T> {
+export function usePolling<T>(
+  load: () => Promise<T>,
+  intervalMs = 5000,
+  enabled = true,
+): Polled<T> {
   const [data, setData] = useState<T | null>(null);
   const [online, setOnline] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -31,12 +35,15 @@ export function usePolling<T>(load: () => Promise<T>, intervalMs = 5000): Polled
 
   useEffect(() => {
     const first = setTimeout(refresh, 0);
+    if (!enabled || intervalMs <= 0) {
+      return () => clearTimeout(first);
+    }
     const timer = setInterval(refresh, intervalMs);
     return () => {
       clearTimeout(first);
       clearInterval(timer);
     };
-  }, [refresh, intervalMs]);
+  }, [refresh, intervalMs, enabled]);
 
   return { data, online, loading, updatedAt, refresh };
 }

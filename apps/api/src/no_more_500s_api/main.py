@@ -20,9 +20,12 @@ def create_app(repository: TraceRepository | None = None) -> FastAPI:
                 database=settings.clickhouse_database,
                 username=settings.clickhouse_user,
                 password=settings.clickhouse_password,
+                inactivity_seconds=settings.run_inactivity_seconds,
             )
         elif settings.trace_repository == "memory":
-            repository = InMemoryTraceRepository()
+            repository = InMemoryTraceRepository(
+                inactivity_seconds=settings.run_inactivity_seconds,
+            )
         else:
             raise ValueError(f"Unknown trace repository: {settings.trace_repository}")
     app = FastAPI(title="No More 500s API", version="0.1.0")

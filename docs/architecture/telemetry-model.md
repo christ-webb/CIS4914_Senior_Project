@@ -10,11 +10,17 @@ A trace represents one top-level agent or workflow run.
 | `project_id` | Customer-defined project namespace |
 | `name` | Human-readable run name |
 | `started_at` | UTC start timestamp |
-| `status` | `unset`, `ok`, or `error` |
+| `status` | `unset`, `ok`, or `error` (outcome; not a live-run lifecycle) |
+| `lifecycle` | `running`, `completed`, `failed`, `interrupted`, or `unknown` |
+| `last_activity_at` | Last observed telemetry receipt |
+| `ended_at` | Set when a run is finalized |
 | `attributes` | Extensible application metadata |
 | `spans` | Ordered observable execution units |
 
-The API derives duration, total tokens, and total cost from spans.
+The API derives duration, total tokens, and total cost from reconstructed spans.
+Batch traces with `status=unset` have `lifecycle=unknown` (outcome not
+confirmed). Live inactivity beyond `NM5_RUN_INACTIVITY_SECONDS` (default 120)
+is shown as `interrupted`, which is not a failure.
 
 ## Span
 

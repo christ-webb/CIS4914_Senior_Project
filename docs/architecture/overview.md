@@ -20,9 +20,9 @@ flowchart LR
 
 The API selects a repository at startup. Local development defaults to ClickHouse
 so runs survive API restarts. Isolated unit tests inject the in-memory repository.
-ClickHouse persists each trace summary and its spans in separate MergeTree tables.
-Queries reconstruct ordered spans and parent IDs through the repository boundary
-and only return spans that share the committed header `ingestion_id`.
+ClickHouse persists batch traces in MergeTree tables and live telemetry in an
+append-only `run_events` log. Queries reconstruct live runs from that log and
+only return batch spans that share the committed header `ingestion_id`.
 
 ## Boundaries
 

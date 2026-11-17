@@ -1,8 +1,9 @@
-import type { SpanStatus } from "./types.ts";
+import type { RunLifecycle, SpanStatus } from "./types.ts";
 
 export interface TraceListParams {
   project_id?: string;
   status?: SpanStatus;
+  lifecycle?: RunLifecycle;
   started_after?: string;
   started_before?: string;
   limit?: number;
@@ -13,6 +14,7 @@ export function buildTraceListPath(params: TraceListParams = {}): string {
   const search = new URLSearchParams();
   if (params.project_id) search.set("project_id", params.project_id);
   if (params.status) search.set("status", params.status);
+  if (params.lifecycle) search.set("lifecycle", params.lifecycle);
   if (params.started_after) search.set("started_after", params.started_after);
   if (params.started_before) search.set("started_before", params.started_before);
   if (params.limit != null) search.set("limit", String(params.limit));

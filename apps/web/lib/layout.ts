@@ -53,6 +53,17 @@ export function layoutSpans(spans: Span[]): SpanLayout {
   return { positions, edges };
 }
 
+export function mergeLayoutPositions(
+  previous: SpanLayout["positions"],
+  next: SpanLayout,
+): SpanLayout {
+  const positions = { ...next.positions };
+  for (const id of Object.keys(positions)) {
+    if (previous[id]) positions[id] = previous[id];
+  }
+  return { ...next, positions };
+}
+
 export interface TimelineRow {
   span: Span;
   offsetMs: number;

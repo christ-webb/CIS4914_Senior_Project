@@ -6,14 +6,19 @@ Base path: `/v1`
 | --- | --- | --- |
 | `GET` | `/health` | Liveness check (does not probe ClickHouse) |
 | `POST` | `/v1/traces` | Validate and store one complete trace |
+| `POST` | `/v1/runs` | Start a live agent run (persisted immediately) |
+| `POST` | `/v1/runs/{trace_id}/events` | Append span_start, span_complete, or heartbeat events |
+| `POST` | `/v1/runs/{trace_id}/finalize` | Mark a live run completed or failed |
 | `GET` | `/v1/traces` | List trace summaries, newest first |
 | `GET` | `/v1/projects` | Distinct project IDs, sorted |
-| `GET` | `/v1/traces/{trace_id}` | Fetch a committed trace and its visible spans |
+| `GET` | `/v1/traces/{trace_id}` | Fetch a batch trace or reconstructed live run |
 | `GET` | `/v1/traces/{trace_id}/failures` | Repeated-tool-call findings for a stored trace |
 
-The initial API accepts whole traces to keep the first vertical slice small.
-Streaming spans and OTLP ingestion should be added only after ordering,
-idempotency, partial failure, and retry behavior are specified.
+`POST /v1/traces` remains first-write-wins and unchanged. Live runs use the
+append-only event log described in ADR 0004. Each live event carries a stable
+`event_id` (idempotency), client `sequence` (apply order), `occurred_at`
+(execution time), and server `received_at` (liveness). Duplicate `event_id`s
+return the current reconstructed trace without inflating spans or totals.
 
 ## List query parameters
 
@@ -24,6 +29,7 @@ are applied **before** pagination:
 | --- | --- |
 | `project_id` | Exact project match |
 | `status` | `ok`, `error`, or `unset` |
+| `lifecycle` | `running`, `completed`, `failed`, `interrupted`, or `unknown` |
 | `started_after` | Inclusive lower bound on `started_at` |
 | `started_before` | Inclusive upper bound on `started_at` |
 | `limit` | 1–200; omitted returns all matching rows |

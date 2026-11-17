@@ -4,8 +4,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from no_more_500s_api.domain.models import SpanStatus, Trace, TraceCreate, TraceSummary
+from no_more_500s_api.domain.models import (
+    RunEventIn,
+    RunFinalize,
+    RunLifecycle,
+    RunStart,
+    SpanStatus,
+    Trace,
+    TraceCreate,
+    TraceSummary,
+)
 from no_more_500s_api.services.failure_detection import LoopFinding, detect_repeated_tool_calls
+from no_more_500s_api.services.run_reconstruction import InvalidLifecycleError
 from no_more_500s_api.services.trace_service import (
     TraceConflictError,
     TraceListQuery,
@@ -31,17 +41,59 @@ def _storage_http_error() -> HTTPException:
     )
 
 
+def _translate_write_errors(error: Exception) -> HTTPException:
+    if isinstance(error, TraceConflictError):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Trace already exists")
+    if isinstance(error, InvalidLifecycleError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Invalid lifecycle transition",
+        )
+    if isinstance(error, TraceNotFoundError):
+        return HTTPException(status_code=404, detail="Trace not found")
+    if isinstance(error, TraceStorageError):
+        return _storage_http_error()
+    raise error
+
+
 @router.post("/traces", response_model=Trace, status_code=status.HTTP_201_CREATED)
 def create_trace(payload: TraceCreate, trace_repository: RepositoryDependency) -> Trace:
     try:
         return trace_repository.save(payload)
-    except TraceConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Trace already exists",
-        ) from error
-    except TraceStorageError as error:
-        raise _storage_http_error() from error
+    except (TraceConflictError, TraceStorageError) as error:
+        raise _translate_write_errors(error) from error
+
+
+@router.post("/runs", response_model=Trace, status_code=status.HTTP_201_CREATED)
+def start_run(payload: RunStart, trace_repository: RepositoryDependency) -> Trace:
+    try:
+        return trace_repository.start_run(payload)
+    except (TraceConflictError, TraceStorageError, InvalidLifecycleError) as error:
+        raise _translate_write_errors(error) from error
+
+
+@router.post("/runs/{trace_id}/events", response_model=Trace)
+def append_run_events(
+    trace_id: UUID,
+    payload: list[RunEventIn],
+    trace_repository: RepositoryDependency,
+) -> Trace:
+    try:
+        return trace_repository.append_events(trace_id, payload)
+    except (TraceNotFoundError, TraceStorageError, InvalidLifecycleError) as error:
+        raise _translate_write_errors(error) from error
+
+
+@router.post("/runs/{trace_id}/finalize", response_model=Trace)
+def finalize_run(
+    trace_id: UUID,
+    payload: RunFinalize,
+    trace_repository: RepositoryDependency,
+) -> Trace:
+    try:
+        return trace_repository.finalize_run(trace_id, payload)
+    except (TraceNotFoundError, TraceStorageError, InvalidLifecycleError) as error:
+        raise _translate_write_errors(error) from error
 
 
 @router.get("/traces", response_model=list[TraceSummary])
@@ -49,6 +101,7 @@ def list_traces(
     trace_repository: RepositoryDependency,
     project_id: str | None = None,
     status_filter: Annotated[SpanStatus | None, Query(alias="status")] = None,
+    lifecycle: RunLifecycle | None = None,
     started_after: datetime | None = None,
     started_before: datetime | None = None,
     limit: Annotated[int | None, Query(ge=1, le=200)] = None,
@@ -57,6 +110,7 @@ def list_traces(
     query = TraceListQuery(
         project_id=project_id,
         status=status_filter,
+        lifecycle=lifecycle,
         started_after=started_after,
         started_before=started_before,
         limit=limit,
@@ -92,6 +146,7 @@ def get_trace_failures(trace_id: UUID, trace_repository: RepositoryDependency) -
 
     This read-only endpoint returns heuristic findings; an empty list means no
     repeated-tool-call pattern was found, not that the trace is error-free.
+    Findings on running traces are provisional.
     """
     try:
         trace = trace_repository.get(trace_id)

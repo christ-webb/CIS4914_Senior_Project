@@ -36,3 +36,16 @@ CREATE TABLE IF NOT EXISTS nomore500s.spans
 ENGINE = MergeTree
 ORDER BY (trace_id, started_at, span_id);
 
+CREATE TABLE IF NOT EXISTS nomore500s.run_events
+(
+    event_id UUID,
+    trace_id UUID,
+    event_type LowCardinality(String),
+    sequence UInt64,
+    occurred_at DateTime64(3, 'UTC'),
+    received_at DateTime64(3, 'UTC'),
+    payload_json String
+)
+ENGINE = MergeTree
+ORDER BY (trace_id, sequence, event_id);
+

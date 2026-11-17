@@ -134,6 +134,16 @@ select.search { color-scheme: dark; }
 .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; background: rgba(100, 116, 139, .2); color: var(--ink); font-size: .72rem; font-weight: 600; }
 .pill.ok { background: rgba(74, 222, 128, .15); color: var(--ok); }
 .pill.error { background: rgba(248, 113, 113, .15); color: var(--bad); }
+.pill.running { background: rgba(96, 165, 250, .18); color: #93c5fd; }
+.pill.interrupted { background: rgba(251, 191, 36, .18); color: #fbbf24; }
+.pill.completed { background: rgba(74, 222, 128, .15); color: var(--ok); }
+.pill.failed { background: rgba(248, 113, 113, .15); color: var(--bad); }
+.pill.unknown { background: rgba(100, 116, 139, .2); color: var(--ink); }
+
+.active-runs { padding: 16px 20px; margin-bottom: 16px; }
+.active-runs-list { display: grid; gap: 8px; margin-top: 10px; }
+.active-run-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 10px; text-decoration: none; color: inherit; }
+.active-run-row:hover { background: rgba(255,255,255,.04); }
 
 .tabs { display: flex; gap: 4px; margin: 18px 0 14px; padding: 4px; width: fit-content; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
 .tab { padding: 6px 16px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }

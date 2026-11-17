@@ -1,11 +1,10 @@
 
-import time
-from datetime import datetime, timezone
+import os
 from pathlib import Path
 
 from google import genai
 from google.genai import types
-from nomore500s import NoMore500sClient, SpanData, TraceData
+from nomore500s import NoMore500sClient
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL = "gemini-3.5-flash-lite"
@@ -17,88 +16,47 @@ TASK = (
 )
 
 
-def now():
-    return datetime.now(timezone.utc)
-
-
 def read_project_readme():
     """Read the local senior design README."""
     return (ROOT / "README.md").read_text()[:12000]
 
 
-def main():
-    trace = TraceData(
-        project_id="gemini-agent-demo",
-        name="Gemini Project Research Agent",
-        status="unset",
-    )
-
-    agent = SpanData(
-        type="agent",
-        name="Analyze project with Gemini",
-        duration_ms=0,
-        status="unset",
-        started_at=now(),
-        input={"task": TASK},
-    )
-    trace.spans.append(agent)
-
-    started = time.perf_counter()
-
-    def recorded_llm_call(client, contents, config, name):
-        call_started = time.perf_counter()
-        call_time = now()
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=contents,
-                config=config,
-            )
-        except Exception as exc:
-            trace.spans.append(SpanData(
-                type="llm",
-                name=name,
-                parent_span_id=agent.span_id,
-                started_at=call_time,
-                duration_ms=(
-                    time.perf_counter() - call_started
-                ) * 1000,
-                status="error",
-                output={"error_type": type(exc).__name__},
-            ))
-            raise
-
-        usage = response.usage_metadata
-        tokens = (
-            (usage.total_token_count or 0)
-            if usage else 0
+def recorded_llm_call(run, client, contents, config, name):
+    with run.llm(
+        name,
+        attributes={
+            "gen_ai.provider": "google",
+            "gen_ai.request.model": MODEL,
+        },
+    ) as span:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=contents,
+            config=config,
         )
-
-        trace.spans.append(SpanData(
-            type="llm",
-            name=name,
-            parent_span_id=agent.span_id,
-            started_at=call_time,
-            duration_ms=(
-                time.perf_counter() - call_started
-            ) * 1000,
-            status="ok",
-            token_count=tokens,
-            attributes={
-                "gen_ai.provider": "google",
-                "gen_ai.request.model": MODEL,
-            },
-            output={
-                "tool_requested": bool(response.function_calls),
-                "response_characters": len(response.text or "")
-                if not response.function_calls else 0,
-            },
-        ))
+        usage = response.usage_metadata
+        span.token_count = (usage.total_token_count or 0) if usage else 0
+        span.output = {
+            "tool_requested": bool(response.function_calls),
+            "response_characters": len(response.text or "")
+            if not response.function_calls else 0,
+        }
         return response
 
-    try:
+
+def main():
+    api_url = os.environ.get("NM5_API_URL", "http://localhost:8000")
+    telemetry = NoMore500sClient(api_url=api_url, trust_environment=False)
+    with telemetry.start_run(
+        project_id="gemini-agent-demo",
+        name="Gemini Project Research Agent",
+        agent_name="Analyze project with Gemini",
+        agent_input={"task": TASK},
+        attributes={"gen_ai.provider": "google", "gen_ai.request.model": MODEL},
+    ) as run:
         with genai.Client() as client:
             first = recorded_llm_call(
+                run,
                 client,
                 TASK,
                 types.GenerateContentConfig(
@@ -123,33 +81,12 @@ def main():
             if len(calls) != 1 or calls[0].name != "read_project_readme":
                 raise RuntimeError("Unexpected Gemini tool request")
 
-            tool_started = time.perf_counter()
-            tool_time = now()
-
-            try:
+            with run.tool("read_project_readme") as tool:
                 readme = read_project_readme()
-                tool_status = "ok"
-            except Exception as exc:
-                readme = f"Tool error: {type(exc).__name__}"
-                tool_status = "error"
-
-            trace.spans.append(SpanData(
-                type="tool",
-                name="read_project_readme",
-                parent_span_id=agent.span_id,
-                started_at=tool_time,
-                duration_ms=(
-                    time.perf_counter() - tool_started
-                ) * 1000,
-                status=tool_status,
-                output={
-                    "status": tool_status,
+                tool.output = {
+                    "status": "ok",
                     "characters_returned": len(readme),
-                },
-            ))
-
-            if tool_status == "error":
-                raise RuntimeError(readme)
+                }
 
             tool_result = types.Content(
                 role="user",
@@ -162,6 +99,7 @@ def main():
             )
 
             second = recorded_llm_call(
+                run,
                 client,
                 [
                     types.Content(
@@ -184,38 +122,13 @@ def main():
             if not answer:
                 raise RuntimeError("Gemini returned no answer")
 
-            trace.status = "ok"
-            agent.status = "ok"
-            agent.output = {
-                "answer_length": len(answer),
-                "result": "Analysis completed",
-            }
-
             print("\nGEMINI ANSWER:\n")
             print(answer)
 
-    except Exception as exc:
-        trace.status = "error"
-        agent.status = "error"
-        agent.output = {
-            "error_type": type(exc).__name__,
-            "message": str(exc)[:300],
-        }
-        print("\nAgent failed:", exc)
-
-    finally:
-        agent.duration_ms = (
-            time.perf_counter() - started
-        ) * 1000
-
-        stored = NoMore500sClient(
-            api_url="http://localhost:8000",
-            trust_environment=False,
-        ).send_trace(trace)
-
         print("\nTelemetry submitted")
-        print("Trace ID:", stored["trace_id"])
-        print("Status:", trace.status)
+        print("Trace ID:", run.trace_id)
+        if run.telemetry_errors:
+            print("Telemetry delivery issues:", len(run.telemetry_errors))
 
 
 if __name__ == "__main__":

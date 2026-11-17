@@ -18,7 +18,14 @@ tests, without changing application behavior or another contributor's components
 - **Live ClickHouse** (`apps/api/tests/test_clickhouse_repository.py`):
   Opt-in integration covering restart durability, a later insert after restart,
   duplicate rejection, header-insert failure then retry (visible spans not
-  doubled), filters before limit, and 503 on connectivity failure.
+  doubled), filters before limit, 503 on connectivity failure, live event-log
+  restart durability, and retry after a fault injected between event inserts.
+- **Live runs** (`apps/api/tests/test_live_runs.py`, `test_run_reconstruction.py`):
+  Incremental ingest, lifecycle transitions, idempotent retries, delayed
+  post-finalize completion, batch `unset` remaining `unknown`, and
+  reconstruction ordering.
+- **Live SDK** (`packages/python-sdk/tests/test_live_client.py`): context
+  managers, stable event IDs across retries, and telemetry vs agent errors.
 
 ## Run checks from the repository root
 

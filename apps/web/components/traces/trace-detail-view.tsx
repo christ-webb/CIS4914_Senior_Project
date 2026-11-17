@@ -1,17 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { TraceView } from "@/components/traces/trace-view";
 import { LiveStatus, PageHeader } from "@/components/shell/page-header";
 import { usePolling } from "@/hooks/use-polling";
 import { getTrace } from "@/lib/api";
 import { errorMessage, errorSignature } from "@/lib/analytics";
+import { isActiveLifecycle, traceLifecycle } from "@/lib/types";
 
 export function TraceDetailView({ traceId }: { traceId: string }) {
   const load = useCallback(() => getTrace(traceId), [traceId]);
-  const { data: trace, online, loading, updatedAt, refresh } = usePolling(load, 10000);
+  const [intervalMs, setIntervalMs] = useState(2000);
+  const { data: trace, online, loading, updatedAt, refresh } = usePolling(load, intervalMs);
+  const nextInterval = trace && !isActiveLifecycle(traceLifecycle(trace)) ? 0 : 2000;
+  if (nextInterval !== intervalMs) setIntervalMs(nextInterval);
   const failures = useMemo(
     () =>
       (trace?.spans ?? [])

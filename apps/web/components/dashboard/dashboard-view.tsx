@@ -2,17 +2,27 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Donut, LatencyBars, Sparkline } from "@/components/dashboard/charts";
 import { EmptyState, LiveStatus, PageHeader } from "@/components/shell/page-header";
 import { usePolling } from "@/hooks/use-polling";
 import { fetchTraces } from "@/lib/api";
 import { computeStats, formatCompact, formatCost, formatMs, recentTraces, statusCounts } from "@/lib/stats";
+import { isActiveLifecycle, traceLifecycle, type TraceSummary } from "@/lib/types";
+
+function elapsedLabel(trace: TraceSummary, nowMs: number): string {
+  if (isActiveLifecycle(traceLifecycle(trace))) {
+    return formatMs(Math.max(0, nowMs - Date.parse(trace.started_at)));
+  }
+  return formatMs(trace.duration_ms);
+}
 
 export function DashboardView() {
   const router = useRouter();
-  const { data, online, loading, updatedAt, refresh } = usePolling(fetchTraces);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [intervalMs, setIntervalMs] = useState(5000);
+  const { data, online, loading, updatedAt, refresh } = usePolling(fetchTraces, intervalMs);
   const traces = useMemo(() => data ?? [], [data]);
   const stats = useMemo(() => computeStats(traces), [traces]);
   const counts = useMemo(() => statusCounts(traces), [traces]);
@@ -20,6 +30,19 @@ export function DashboardView() {
   const latest = useMemo(() => [...recent].reverse().slice(0, 8), [recent]);
   const failed = useMemo(() => latest.filter((trace) => trace.status === "error"), [latest]);
   const maxDuration = Math.max(1, ...latest.map((trace) => trace.duration_ms));
+  const liveRuns = useMemo(
+    () => traces.filter((trace) => isActiveLifecycle(traceLifecycle(trace))),
+    [traces],
+  );
+
+  const nextInterval = liveRuns.length > 0 ? 2000 : 5000;
+  if (nextInterval !== intervalMs) setIntervalMs(nextInterval);
+
+  useEffect(() => {
+    if (liveRuns.length === 0) return undefined;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [liveRuns.length]);
 
   return (
     <>
@@ -39,7 +62,7 @@ export function DashboardView() {
               <div>
                 <span className="kpi-label">Runs</span>
                 <strong>{stats.totalRuns}</strong>
-                <small className="muted">{counts.ok} ok · {counts.error} failed</small>
+                <small className="muted">{counts.ok} ok · {counts.error} failed · {counts.unset} unknown</small>
               </div>
               <Donut counts={counts} />
             </div>
@@ -76,11 +99,42 @@ export function DashboardView() {
             </div>
           </section>
 
+          <section className="card active-runs" aria-label="Active runs">
+            <div className="card-head">
+              <h3>Active runs</h3>
+              <span className="muted">{liveRuns.length} live</span>
+            </div>
+            {liveRuns.length === 0 ? (
+              <p className="muted">No agents are reporting telemetry right now.</p>
+            ) : (
+              <div className="active-runs-list">
+                {liveRuns.map((trace) => {
+                  const lifecycle = traceLifecycle(trace);
+                  return (
+                    <Link key={trace.trace_id} href={`/traces/${trace.trace_id}`} className="active-run-row">
+                      <span>
+                        <strong>{trace.name}</strong>
+                        <small className="muted"> {trace.project_id}</small>
+                      </span>
+                      <span className="muted">
+                        <span className={`pill ${lifecycle}`}>{lifecycle}</span>{" "}
+                        {elapsedLabel(trace, nowMs)}
+                        {trace.last_activity_at
+                          ? ` · last ${new Date(trace.last_activity_at).toLocaleTimeString()}`
+                          : ""}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
           <section className="card chart-card">
             <div className="card-head">
               <h3>Latency by run</h3>
               <span className="legend muted">
-                <i className="dot ok" /> ok <i className="dot error" /> error <i className="dot unset" /> unset
+                <i className="dot ok" /> ok <i className="dot error" /> error <i className="dot unset" /> unknown
               </span>
             </div>
             <LatencyBars traces={recent} selectedId={null} onSelect={(id) => router.push(`/traces/${id}`)} />
@@ -97,20 +151,23 @@ export function DashboardView() {
                   <tr><th>Run</th><th>Project</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Cost</th><th>Started</th></tr>
                 </thead>
                 <tbody>
-                  {latest.map((trace) => (
-                    <tr key={trace.trace_id}>
-                      <td><Link href={`/traces/${trace.trace_id}`} className="row-link">{trace.name}</Link></td>
-                      <td className="muted">{trace.project_id}</td>
-                      <td><span className={`pill ${trace.status}`}>{trace.status}</span></td>
-                      <td className="num">
-                        {formatMs(trace.duration_ms)}
-                        <span className="run-bar inline"><i className={trace.status} style={{ width: `${(trace.duration_ms / maxDuration) * 100}%` }} /></span>
-                      </td>
-                      <td className="num">{trace.total_tokens.toLocaleString()}</td>
-                      <td className="num">{formatCost(trace.total_cost_usd)}</td>
-                      <td className="muted">{new Date(trace.started_at).toLocaleTimeString()}</td>
-                    </tr>
-                  ))}
+                  {latest.map((trace) => {
+                    const lifecycle = traceLifecycle(trace);
+                    return (
+                      <tr key={trace.trace_id}>
+                        <td><Link href={`/traces/${trace.trace_id}`} className="row-link">{trace.name}</Link></td>
+                        <td className="muted">{trace.project_id}</td>
+                        <td><span className={`pill ${lifecycle}`}>{lifecycle}</span></td>
+                        <td className="num">
+                          {elapsedLabel(trace, nowMs)}
+                          <span className="run-bar inline"><i className={trace.status} style={{ width: `${(trace.duration_ms / maxDuration) * 100}%` }} /></span>
+                        </td>
+                        <td className="num">{trace.total_tokens.toLocaleString()}</td>
+                        <td className="num">{formatCost(trace.total_cost_usd)}</td>
+                        <td className="muted">{new Date(trace.started_at).toLocaleTimeString()}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

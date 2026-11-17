@@ -31,15 +31,19 @@ The example credentials are only for local development. The mounted
 `infra/clickhouse/init.sql` creates the database and tables on first startup
 with `IF NOT EXISTS`. Existing Compose volumes retain data. The API adds the
 `ingestion_id` column with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on first
-use; it does not drop volumes or rewrite historical rows.
+use and creates `run_events` if missing; it does not drop volumes or rewrite
+historical rows. `NM5_RUN_INACTIVITY_SECONDS` (default 120) controls when a
+running live trace is displayed as `interrupted`.
 
 ### Verify history survives restarts
 
-1. Run `make demo` twice. Confirm both runs appear on `/` and `/explorer`.
-2. Stop the API process. Leave ClickHouse running. Do **not** run
+1. Run `make demo` while the dashboard is open. Confirm the run appears under
+   **Active runs** before the process exits, then remains after it completes.
+2. Run `make demo` again. Confirm both runs appear on `/` and `/explorer`.
+3. Stop the API process. Leave ClickHouse running. Do **not** run
    `docker compose down -v`.
-3. Start `make api-dev` again and confirm both trace IDs still list and open.
-4. Submit a third demo run and confirm all three remain.
+4. Start `make api-dev` again and confirm both trace IDs still list and open.
+5. Submit a third demo run and confirm all three remain.
 
 Live ClickHouse tests:
 
@@ -58,6 +62,11 @@ Each ingest stamps spans and the trace header with an `ingestion_id`. The API
 returns only spans that match the committed header, so a failed header insert
 followed by a retry does not double the visible graph.
 
+Live events use a stable `event_id`. Replaying the same event does not add
+spans or tokens. After finalize, new execution activity is HTTP 409; delayed
+`span_complete` for spans already on the run is reconciled. The event log is
+authoritative: a crash after inserting an event still leaves that event visible.
+
 The tests use unique project IDs and leave their trace rows in the local
 database. The API should not be exposed to untrusted telemetry without
 authorization and input redaction; callers must not send credentials,
@@ -69,6 +78,8 @@ authorization headers, or other secrets in inputs or attributes.
 | --- | --- |
 | Dashboard shows "Can't reach the API" or explorer says storage is unavailable | API down, ClickHouse down, or wrong `NM5_CLICKHOUSE_*` credentials (HTTP 503) |
 | History vanishes after `make api-dev` | `NM5_TRACE_REPOSITORY=memory` in `.env` |
+| API returns 503 with a healthy Compose container | Missing `.env`, or `NM5_CLICKHOUSE_PASSWORD` does not match `CLICKHOUSE_PASSWORD` (Compose defaults to `nomore500s`; the API default is empty). Copy `.env.example` to `.env`. |
+| Cursor in-app browser shows `ERR_CONNECTION_REFUSED` for localhost | The embedded browser cannot always reach the host machine. Open `http://localhost:3000` in a system browser. |
 | Dashboard table only shows eight rows | Use **View all runs** / Trace Explorer |
 | Explorer says no traces match | Filters are active; clear project, status, or time range |
 

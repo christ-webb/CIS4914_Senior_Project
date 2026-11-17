@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     clickhouse_database: str = "nomore500s"
     clickhouse_user: str = "default"
     clickhouse_password: str = ""
+    run_inactivity_seconds: float = 120
 
     @property
     def allowed_origins(self) -> list[str]:

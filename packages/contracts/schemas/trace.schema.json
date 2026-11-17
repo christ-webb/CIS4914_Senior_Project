@@ -10,6 +10,14 @@
     "name": { "type": "string", "minLength": 1, "maxLength": 200 },
     "started_at": { "type": "string", "format": "date-time" },
     "status": { "enum": ["unset", "ok", "error"] },
+    "lifecycle": {
+      "enum": ["running", "completed", "failed", "interrupted", "unknown"]
+    },
+    "last_activity_at": { "type": ["string", "null"], "format": "date-time" },
+    "ended_at": { "type": ["string", "null"], "format": "date-time" },
+    "duration_ms": { "type": "number", "minimum": 0 },
+    "total_tokens": { "type": "integer", "minimum": 0 },
+    "total_cost_usd": { "type": "number", "minimum": 0 },
     "attributes": { "type": "object" },
     "spans": {
       "type": "array",
