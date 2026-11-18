@@ -45,6 +45,9 @@ class TraceListQuery:
     project_id: str | None = None
     status: SpanStatus | None = None
     lifecycle: RunLifecycle | None = None
+    source: str | None = None
+    provider: str | None = None
+    agent_framework: str | None = None
     started_after: datetime | None = None
     started_before: datetime | None = None
     limit: int | None = None
@@ -78,6 +81,12 @@ def apply_trace_list_query(
         items = [item for item in items if item.status == query.status]
     if query.lifecycle is not None:
         items = [item for item in items if item.lifecycle == query.lifecycle]
+    if query.source is not None:
+        items = [item for item in items if item.source == query.source]
+    if query.provider is not None:
+        items = [item for item in items if item.provider == query.provider]
+    if query.agent_framework is not None:
+        items = [item for item in items if item.agent_framework == query.agent_framework]
     if query.started_after is not None:
         items = [item for item in items if item.started_at >= query.started_after]
     if query.started_before is not None:

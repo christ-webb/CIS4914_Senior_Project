@@ -76,6 +76,16 @@ def is_codex_style(trace: Trace) -> bool:
     return source == "cli" or framework == "codex"
 
 
+def is_hooks_without_llm(trace: Trace) -> bool:
+    source = attr_str(trace.attributes, "nm5.source")
+    instrumentation = attr_str(trace.attributes, "nm5.instrumentation") or ""
+    if has_llm_spans(trace):
+        return False
+    if source in {"cli", "cursor", "vscode"}:
+        return "otel" not in instrumentation
+    return False
+
+
 def coverage_for_trace(
     trace: Trace,
     *,
@@ -88,7 +98,7 @@ def coverage_for_trace(
         unsupported.append(DetectionType.TOKEN_ANOMALY.value)
     if cost_status == "unavailable":
         unsupported.append(DetectionType.COST_ANOMALY.value)
-    if not has_llm_spans(trace) and is_codex_style(trace):
+    if is_hooks_without_llm(trace) or (not has_llm_spans(trace) and is_codex_style(trace)):
         unsupported.append(DetectionType.PROVIDER_ERROR.value)
     unique_unsupported = list(dict.fromkeys(unsupported))
     return InstrumentationCoverage(

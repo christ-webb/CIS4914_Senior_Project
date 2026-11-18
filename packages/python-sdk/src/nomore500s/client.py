@@ -271,7 +271,7 @@ class LiveRun:
 
     def finalize(
         self,
-        status: Literal["completed", "failed"] = "completed",
+        status: Literal["completed", "failed", "cancelled"] = "completed",
         error: dict[str, Any] | None = None,
     ) -> None:
         if self._closed:

@@ -28,9 +28,17 @@ interface HistoryPage {
 
 function readFilters(params: URLSearchParams): TraceListParams {
   const status = params.get("status");
+  const lifecycle = params.get("lifecycle");
+  const allowedLifecycle = ["running", "completed", "failed", "cancelled", "interrupted", "unknown"] as const;
   return {
     project_id: params.get("project") || undefined,
     status: status === "ok" || status === "error" || status === "unset" ? status : undefined,
+    lifecycle: allowedLifecycle.includes(lifecycle as (typeof allowedLifecycle)[number])
+      ? (lifecycle as TraceListParams["lifecycle"])
+      : undefined,
+    source: params.get("source") || undefined,
+    provider: params.get("provider") || undefined,
+    agent_framework: params.get("agent") || undefined,
     started_after: params.get("from") || undefined,
     started_before: params.get("to") || undefined,
   };
@@ -134,6 +142,36 @@ export function TraceExplorer() {
                 {project}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span className="muted">Source</span>
+          <select
+            className="search"
+            aria-label="Filter by source"
+            value={filters.source ?? ""}
+            onChange={(event) => replaceParams({ source: event.target.value || undefined, page: undefined })}
+          >
+            <option value="">All sources</option>
+            <option value="cli">Codex CLI</option>
+            <option value="cursor">Cursor</option>
+            <option value="vscode">VS Code Copilot</option>
+          </select>
+        </label>
+        <label className="filter-field">
+          <span className="muted">Lifecycle</span>
+          <select
+            className="search"
+            aria-label="Filter by lifecycle"
+            value={filters.lifecycle ?? ""}
+            onChange={(event) => replaceParams({ lifecycle: event.target.value || undefined, page: undefined })}
+          >
+            <option value="">All lifecycles</option>
+            <option value="running">running</option>
+            <option value="completed">completed</option>
+            <option value="failed">failed</option>
+            <option value="cancelled">cancelled</option>
+            <option value="interrupted">interrupted</option>
           </select>
         </label>
         <div>

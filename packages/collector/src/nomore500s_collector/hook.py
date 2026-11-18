@@ -32,19 +32,22 @@ def collector_token() -> str:
         return ""
 
 
-def post_hook(payload: dict[str, Any], delivery_id: str) -> None:
+def post_hook(payload: dict[str, Any], delivery_id: str, *, source: str | None = None) -> None:
     data = json.dumps(payload).encode("utf-8")
     last_error: Exception | None = None
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {collector_token()}",
+        "X-NM5-Delivery-Id": delivery_id,
+    }
+    if source:
+        headers["X-NM5-Source"] = source
     for attempt in range(3):
         request = Request(
             f"{collector_url()}/v1/collector/events",
             data=data,
             method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {collector_token()}",
-                "X-NM5-Delivery-Id": delivery_id,
-            },
+            headers=headers,
         )
         try:
             with urlopen(request, timeout=1.5) as response:
@@ -59,7 +62,7 @@ def post_hook(payload: dict[str, Any], delivery_id: str) -> None:
         return
 
 
-def run_hook(stdin: str | None = None) -> int:
+def run_hook(stdin: str | None = None, *, source: str | None = None) -> int:
     raw = sys.stdin.read() if stdin is None else stdin
     try:
         payload = json.loads(raw or "{}")
@@ -71,7 +74,7 @@ def run_hook(stdin: str | None = None) -> int:
         return 0
     delivery_id = str(uuid.uuid4())
     try:
-        post_hook(payload, delivery_id)
+        post_hook(payload, delivery_id, source=source)
     except Exception:
         pass
     sys.stdout.buffer.write(HOOK_OK)

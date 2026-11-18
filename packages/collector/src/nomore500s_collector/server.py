@@ -6,12 +6,15 @@ import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
+from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from nomore500s_collector.api_client import LiveRunClient
 from nomore500s_collector.auth import load_or_create_token
+from nomore500s_collector.normalize import normalize_hook_payload
+from nomore500s_collector.otlp import decode_otlp
 from nomore500s_collector.pipeline import OverflowError, Pipeline
 from nomore500s_collector.settings import CollectorSettings
 from nomore500s_collector.store import CollectorStore
@@ -58,6 +61,11 @@ class CollectorApp:
         self.store.close()
 
 
+def _authorized(runtime: CollectorApp, authorization: str | None) -> bool:
+    expected = f"Bearer {runtime.token}"
+    return authorization == expected
+
+
 def create_app(runtime: CollectorApp | None = None) -> FastAPI:
     holder: dict[str, CollectorApp] = {}
 
@@ -76,18 +84,27 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
         return holder["runtime"]
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, Any]:
+        app_runtime = current()
+        return {
+            "status": "ok",
+            "pending": app_runtime.store.pending_count(),
+            "last_flush_error": app_runtime.pipeline.last_flush_error,
+            "otlp": True,
+            "token_configured": bool(app_runtime.token),
+            "otlp_path_token": app_runtime.settings.otlp_path_token,
+            "adapters": ["codex", "cursor", "vscode-copilot", "otel"],
+        }
 
     @app.post("/v1/collector/events")
     async def ingest(
         request: Request,
         authorization: str | None = Header(default=None),
         x_nm5_delivery_id: str | None = Header(default=None),
+        x_nm5_source: str | None = Header(default=None),
     ) -> JSONResponse:
         app_runtime = current()
-        expected = f"Bearer {app_runtime.token}"
-        if authorization != expected:
+        if not _authorized(app_runtime, authorization):
             raise HTTPException(status_code=401, detail="Unauthorized")
         body = await request.body()
         if len(body) > app_runtime.settings.max_body_bytes:
@@ -98,7 +115,8 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="Invalid JSON") from error
         if not isinstance(payload, dict):
             raise HTTPException(status_code=422, detail="Hook payload must be an object")
-        if not payload.get("hook_event_name") or not payload.get("session_id"):
+        normalized = normalize_hook_payload(payload)
+        if not normalized.get("hook_event_name") or not normalized.get("session_id"):
             raise HTTPException(
                 status_code=422,
                 detail="session_id and hook_event_name are required",
@@ -107,9 +125,52 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
         if not delivery_id:
             raise HTTPException(status_code=422, detail="X-NM5-Delivery-Id is required")
         try:
-            result = app_runtime.pipeline.ingest(payload, delivery_id)
+            result = app_runtime.pipeline.ingest(
+                normalized, delivery_id, source=x_nm5_source
+            )
         except OverflowError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
         return JSONResponse(result, status_code=202)
+
+    async def ingest_otlp(
+        request: Request,
+        authorization: str | None,
+        path_token: str | None = None,
+    ) -> JSONResponse:
+        app_runtime = current()
+        if path_token is not None:
+            if not app_runtime.settings.otlp_path_token or path_token != app_runtime.token:
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        elif not _authorized(app_runtime, authorization):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        body = await request.body()
+        if len(body) > app_runtime.settings.max_body_bytes:
+            raise HTTPException(status_code=413, detail="Payload too large")
+        content_type = request.headers.get("content-type", "application/json")
+        try:
+            spans = decode_otlp(body, content_type)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        delivery_id = request.headers.get("X-NM5-Delivery-Id") or str(uuid4())
+        try:
+            result = app_runtime.pipeline.ingest_otlp_spans(spans, delivery_id)
+        except OverflowError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        return JSONResponse(result, status_code=202)
+
+    @app.post("/v1/traces")
+    async def otlp_traces(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        return await ingest_otlp(request, authorization)
+
+    @app.post("/otlp/{path_token}/v1/traces")
+    async def otlp_traces_path(
+        path_token: str,
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> JSONResponse:
+        return await ingest_otlp(request, authorization, path_token=path_token)
 
     return app

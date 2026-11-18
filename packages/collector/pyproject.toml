@@ -15,6 +15,12 @@ nm5-collector = "nomore500s_collector.cli:collector_main"
 nm5-codex-hook = "nomore500s_collector.cli:hook_main"
 nm5-codex-install-hooks = "nomore500s_collector.cli:install_main"
 nm5-codex-uninstall-hooks = "nomore500s_collector.cli:uninstall_main"
+nm5-cursor-hook = "nomore500s_collector.cli:cursor_hook_main"
+nm5-cursor-install-hooks = "nomore500s_collector.cli:cursor_install_main"
+nm5-cursor-uninstall-hooks = "nomore500s_collector.cli:cursor_uninstall_main"
+nm5-vscode-hook = "nomore500s_collector.cli:vscode_hook_main"
+nm5-vscode-install-hooks = "nomore500s_collector.cli:vscode_install_main"
+nm5-vscode-uninstall-hooks = "nomore500s_collector.cli:vscode_uninstall_main"
 
 [build-system]
 requires = ["hatchling"]

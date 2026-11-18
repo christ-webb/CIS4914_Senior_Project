@@ -191,3 +191,28 @@ def test_finalize_then_late_complete_stays_terminal() -> None:
     assert trace.status is SpanStatus.OK
     assert trace.spans[0].token_count == 3
     assert trace.attributes.get("progress") is None
+
+
+def test_cancelled_finalize_is_not_success() -> None:
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    events = [
+        _event(
+            RunEventType.RUN_START,
+            0,
+            t0,
+            {"project_id": "p", "name": "run", "started_at": t0.isoformat()},
+        ),
+        _event(
+            RunEventType.FINALIZE,
+            1,
+            t0,
+            {
+                "status": "cancelled",
+                "attributes": {"nm5.outcome": "cancelled", "nm5.end_reason": "aborted"},
+            },
+        ),
+    ]
+    trace = reconstruct_trace(events, now=t0)
+    assert trace.lifecycle is RunLifecycle.CANCELLED
+    assert trace.status is SpanStatus.UNSET
+    assert trace.attributes["nm5.outcome"] == "cancelled"

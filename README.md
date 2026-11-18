@@ -13,7 +13,7 @@ on access to a model's private chain of thought.
 apps/api/              FastAPI ingestion and query API
 apps/web/              Next.js dashboard and React Flow trace graph
 packages/python-sdk/   Installable Python instrumentation SDK
-packages/collector/    External CLI hook collector (Codex first)
+packages/collector/    External hook collector (Codex, Cursor, VS Code Copilot)
 packages/contracts/    Language-neutral JSON Schemas
 examples/simple-agent/ Deterministic end-to-end demo
 infra/clickhouse/      ClickHouse schema
@@ -68,6 +68,8 @@ uses the same live SDK against the real model.
 To observe a real Codex CLI session, start `make collector`, run
 `uv run nm5-codex-install-hooks`, then use `codex` as usual. See
 [docs/integrations/codex-cli.md](docs/integrations/codex-cli.md).
+Cursor: `uv run nm5-cursor-install-hooks`. VS Code Copilot:
+`uv run nm5-vscode-install-hooks` (add `--enable-otel` for model/token spans).
 
 `NM5_TRACE_REPOSITORY` defaults to `clickhouse`. Isolated unit tests inject the
 in-memory repository and do not use Docker. Set

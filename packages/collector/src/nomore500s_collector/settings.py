@@ -20,6 +20,7 @@ class CollectorSettings(BaseSettings):
     max_pending: int = 5000
     max_body_bytes: int = 262144
     heartbeat_seconds: float = 15.0
+    otlp_path_token: bool = False
 
     def home(self) -> Path:
         return self.collector_home or collector_home()

@@ -99,6 +99,22 @@ def occurrence_key(payload: dict[str, Any], delivery_id: str) -> str:
 class CodexAdapter:
     name = AGENT
 
+    def inferred_start(
+        self,
+        session_id: str,
+        *,
+        workspace: str | None,
+        model: str | None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "hook_event_name": "SessionStart",
+            "session_id": session_id,
+            "cwd": workspace or "",
+            "model": model or "",
+            "source": "inferred",
+        }
+        return body
+
     def plan(self, payload: dict[str, Any], *, delivery_id: str) -> SessionPlan:
         event = str(payload.get("hook_event_name") or "")
         session_id = str(payload.get("session_id") or "")

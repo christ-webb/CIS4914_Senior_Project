@@ -8,7 +8,7 @@ Base path: `/v1`
 | `POST` | `/v1/traces` | Validate and store one complete trace |
 | `POST` | `/v1/runs` | Start a live agent run (persisted immediately) |
 | `POST` | `/v1/runs/{trace_id}/events` | Append span_start, span_complete, or heartbeat events |
-| `POST` | `/v1/runs/{trace_id}/finalize` | Mark a live run completed or failed |
+| `POST` | `/v1/runs/{trace_id}/finalize` | Mark a live run completed, failed, or cancelled |
 | `GET` | `/v1/traces` | List trace summaries, newest first |
 | `GET` | `/v1/projects` | Distinct project IDs, sorted |
 | `GET` | `/v1/traces/{trace_id}` | Fetch a batch trace or reconstructed live run |
@@ -37,7 +37,10 @@ are applied **before** pagination:
 | --- | --- |
 | `project_id` | Exact project match |
 | `status` | `ok`, `error`, or `unset` |
-| `lifecycle` | `running`, `completed`, `failed`, `interrupted`, or `unknown` |
+| `lifecycle` | `running`, `completed`, `failed`, `cancelled`, `interrupted`, or `unknown` |
+| `source` | `nm5.source` exact match (`cli`, `cursor`, `vscode`) |
+| `provider` | `gen_ai.provider` exact match |
+| `agent_framework` | `agent.framework` exact match |
 | `started_after` | Inclusive lower bound on `started_at` |
 | `started_before` | Inclusive upper bound on `started_at` |
 | `limit` | 1–200; omitted returns all matching rows |

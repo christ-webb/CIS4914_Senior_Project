@@ -11,7 +11,9 @@ to `main` after branch protection is enabled.
 Run `make bootstrap` once, then `make check` before requesting review. Use
 `make clickhouse`, `make api-dev`, `make web-dev`, `make collector`,
 `make demo`, and `make demo-diagnostics` for the first vertical slice. Codex CLI setup is in
-[integrations/codex-cli.md](integrations/codex-cli.md).
+[integrations/codex-cli.md](integrations/codex-cli.md),
+[Cursor](integrations/cursor.md), and
+[VS Code Copilot](integrations/vscode-copilot.md).
 
 ## Persistent local traces
 

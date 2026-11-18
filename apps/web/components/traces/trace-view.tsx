@@ -141,8 +141,14 @@ export function TraceView({
             {errors > 0 && ` · ${errors} failed`}
             {live && " · live"}
           </p>
+            {typeof trace.attributes?.["nm5.instrumentation"] === "string" && (
+            <p className="muted">Method: {String(trace.attributes["nm5.instrumentation"])}</p>
+          )}
           {typeof trace.attributes?.["nm5.coverage"] === "string" && (
             <p className="muted">Instrumentation: {String(trace.attributes["nm5.coverage"])}</p>
+          )}
+          {typeof trace.attributes?.["nm5.outcome"] === "string" && (
+            <p className="muted">Outcome: {String(trace.attributes["nm5.outcome"])}</p>
           )}
           {typeof trace.attributes?.["nm5.workspace"] === "string" && (
             <p className="muted">Workspace: {String(trace.attributes["nm5.workspace"])}</p>

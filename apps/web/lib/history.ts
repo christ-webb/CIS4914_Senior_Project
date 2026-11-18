@@ -4,6 +4,9 @@ export interface TraceListParams {
   project_id?: string;
   status?: SpanStatus;
   lifecycle?: RunLifecycle;
+  source?: string;
+  provider?: string;
+  agent_framework?: string;
   started_after?: string;
   started_before?: string;
   limit?: number;
@@ -15,6 +18,9 @@ export function buildTraceListPath(params: TraceListParams = {}): string {
   if (params.project_id) search.set("project_id", params.project_id);
   if (params.status) search.set("status", params.status);
   if (params.lifecycle) search.set("lifecycle", params.lifecycle);
+  if (params.source) search.set("source", params.source);
+  if (params.provider) search.set("provider", params.provider);
+  if (params.agent_framework) search.set("agent_framework", params.agent_framework);
   if (params.started_after) search.set("started_after", params.started_after);
   if (params.started_before) search.set("started_before", params.started_before);
   if (params.limit != null) search.set("limit", String(params.limit));
@@ -42,5 +48,14 @@ export function historyEmptyKind(options: {
 }
 
 export function hasActiveFilters(params: TraceListParams): boolean {
-  return Boolean(params.project_id || params.status || params.started_after || params.started_before);
+  return Boolean(
+    params.project_id
+    || params.status
+    || params.lifecycle
+    || params.source
+    || params.provider
+    || params.agent_framework
+    || params.started_after
+    || params.started_before,
+  );
 }

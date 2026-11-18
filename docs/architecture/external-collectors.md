@@ -6,16 +6,20 @@ ClickHouse `run_events` remains the authoritative store. The collector SQLite
 file is only a local delivery and identity buffer.
 
 ```text
-Codex CLI  -->  nm5-codex-hook  -->  nm5-collector (SQLite pending)
-                                      -->  FastAPI live-run API
-                                      -->  ClickHouse
+Codex CLI / Cursor / Copilot hooks  -->  nm5-*-hook  -->  nm5-collector
+Copilot OTLP (optional)             -->  POST /v1/traces
+                                                    -->  SQLite pending
+                                                    -->  FastAPI live-run API
+                                                    -->  ClickHouse
 ```
 
 ## Adapter contract
 
 Each adapter maps one redacted hook payload plus a `delivery_id` to zero or more
-live-run events. Unknown events are ignored. Missing `SessionStart` infers a
-start from the first observed event. `Stop` is never a session terminal event.
+live-run events. Unknown events are ignored. Missing session start infers a
+start from the first observed event. Turn `stop` / `agentStop` is never a
+session terminal event. Cursor/Copilot abort and window close finalize as
+`cancelled`, not `completed`.
 
 ## Identity
 
