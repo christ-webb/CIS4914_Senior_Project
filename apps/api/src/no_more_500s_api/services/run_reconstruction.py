@@ -102,7 +102,7 @@ def _merge_span(existing: Span | None, incoming: dict[str, Any], *, completing: 
     if incoming.get("name"):
         updates["name"] = incoming["name"]
     if incoming.get("type"):
-        updates["type"] = incoming["type"]
+        updates["type"] = SpanType(incoming["type"])
     if incoming.get("input") is not None and existing.input is None:
         updates["input"] = incoming["input"]
     if incoming.get("output") is not None:

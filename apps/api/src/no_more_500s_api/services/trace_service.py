@@ -70,6 +70,22 @@ class TraceRepository(Protocol):
     def finalize_run(self, trace_id: UUID, finalize: RunFinalize) -> Trace: ...
 
 
+def utc_datetime(value: datetime) -> datetime:
+    """Treat naive values as UTC; convert aware values to UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def clickhouse_bind_datetime(value: datetime) -> datetime:
+    """UTC-aware datetime for ClickHouse DateTime64(3, 'UTC') binding.
+
+    Naive values are treated as UTC. Do not strip tzinfo: clickhouse_connect
+    interprets naive datetimes as local time.
+    """
+    return utc_datetime(value)
+
+
 def apply_trace_list_query(
     summaries: list[TraceSummary], query: TraceListQuery
 ) -> list[TraceSummary]:
@@ -88,16 +104,15 @@ def apply_trace_list_query(
     if query.agent_framework is not None:
         items = [item for item in items if item.agent_framework == query.agent_framework]
     if query.started_after is not None:
-        items = [item for item in items if item.started_at >= query.started_after]
+        after = utc_datetime(query.started_after)
+        items = [item for item in items if utc_datetime(item.started_at) >= after]
     if query.started_before is not None:
-        items = [item for item in items if item.started_at <= query.started_before]
-    def _started(item: TraceSummary) -> datetime:
-        value = item.started_at
-        if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
-        return value.astimezone(UTC)
+        before = utc_datetime(query.started_before)
+        items = [item for item in items if utc_datetime(item.started_at) <= before]
 
-    items = sorted(items, key=lambda item: (_started(item), item.trace_id), reverse=True)
+    items = sorted(
+        items, key=lambda item: (utc_datetime(item.started_at), item.trace_id), reverse=True
+    )
     offset = max(query.offset, 0)
     if query.limit is None:
         return items[offset:]

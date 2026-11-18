@@ -5,6 +5,7 @@ from no_more_500s_api.domain.models import (
     RunEventType,
     RunLifecycle,
     SpanStatus,
+    SpanType,
     StoredRunEvent,
 )
 from no_more_500s_api.services.run_reconstruction import reconstruct_trace
@@ -78,6 +79,7 @@ def test_out_of_order_complete_then_start_does_not_downgrade_or_deflate_totals()
     assert span.cost_usd == 0.2
     assert span.output == {"done": True}
     assert span.name == "model"
+    assert span.type is SpanType.LLM
 
 
 def test_duplicate_event_id_does_not_inflate_tokens() -> None:

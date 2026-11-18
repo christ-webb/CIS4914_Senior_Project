@@ -102,7 +102,9 @@ def cursor_install_main(argv: list[str] | None = None) -> int:
     )
     print(f"Installed Cursor collector hooks in {path}")
     print("Hooks are observe-only and always return {} with exit 0.")
+    print("Permission-sensitive hooks are not registered so Cursor keeps its own allow/deny flow.")
     print("User-level hooks apply locally; cloud agents require project .cursor/hooks.json.")
+    print("Set NM5_HOOK_DEBUG=1 for bounded wrapper and Python hook diagnostics.")
     return 0
 
 

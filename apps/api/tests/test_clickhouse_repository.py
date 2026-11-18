@@ -1,7 +1,7 @@
 """Run against local ClickHouse with NM5_TEST_CLICKHOUSE=1."""
 
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -301,6 +301,53 @@ def test_clickhouse_filters_before_limit() -> None:
         )
     page = list(repo.list(TraceListQuery(project_id=project, limit=1, offset=0)))
     assert [row.name for row in page] == ["keep-new"]
+
+
+def test_clickhouse_started_before_accepts_z_and_offsets() -> None:
+    repo = repository()
+    started = datetime(2026, 11, 17, 10, 0, 0, 123000, tzinfo=UTC)
+    project = f"before-{uuid4()}"
+    repo.save(
+        TraceCreate(
+            project_id=project,
+            name="in-window",
+            started_at=started,
+            spans=[Span(type=SpanType.TOOL, name="t", duration_ms=1)],
+        )
+    )
+    later = repo.save(
+        TraceCreate(
+            project_id=project,
+            name="after-window",
+            started_at=started + timedelta(hours=2),
+            spans=[Span(type=SpanType.TOOL, name="t", duration_ms=1)],
+        )
+    )
+    cutoff = datetime(2026, 11, 17, 10, 33, 0, tzinfo=UTC)
+    eastern = cutoff.astimezone(timezone(timedelta(hours=-5)))
+    names = {
+        row.name
+        for row in repo.list(
+            TraceListQuery(project_id=project, started_before=eastern, limit=21)
+        )
+    }
+    assert "in-window" in names
+    assert "after-window" not in names
+    with TestClient(create_app(repository())) as client:
+        response = client.get(
+            "/v1/traces",
+            params={
+                "project_id": project,
+                "started_before": "2026-11-17T10:33:00.000Z",
+                "limit": 21,
+            },
+        )
+        assert response.status_code == 200, response.text
+        listed = {row["name"] for row in response.json()}
+        assert "in-window" in listed
+        assert "after-window" not in listed
+        detail = client.get(f"/v1/traces/{later.trace_id}")
+        assert detail.status_code == 200
 
 
 def test_live_run_survives_api_restart_and_does_not_corrupt_batch() -> None:
