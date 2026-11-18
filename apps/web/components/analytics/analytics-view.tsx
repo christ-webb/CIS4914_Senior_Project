@@ -15,11 +15,11 @@ export function AnalyticsView() {
 
   const summary = useMemo(() => {
     const runs = traces.length;
-    const failed = traces.filter((trace) => trace.status === "error").length;
+    const successful = traces.filter((trace) => trace.lifecycle === "completed").length;
     const durations = traces.map((trace) => trace.duration_ms);
     return {
       runs,
-      successRate: runs ? ((runs - failed) / runs) * 100 : 0,
+      successRate: runs ? (successful / runs) * 100 : 0,
       p50: percentile(durations, 50),
       p95: percentile(durations, 95),
       costPerRun: runs ? traces.reduce((a, trace) => a + trace.total_cost_usd, 0) / runs : 0,

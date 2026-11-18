@@ -33,3 +33,11 @@ class Adapter(Protocol):
     name: str
 
     def plan(self, payload: dict[str, Any], *, delivery_id: str) -> SessionPlan: ...
+
+    def inferred_start(
+        self,
+        session_id: str,
+        *,
+        workspace: str | None,
+        model: str | None,
+    ) -> dict[str, Any]: ...

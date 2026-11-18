@@ -218,6 +218,19 @@ def test_delayed_completion_after_finalize_is_reconciled(client: TestClient) -> 
     assert body["total_tokens"] == 11
 
 
+def test_cancelled_run_is_filterable_and_not_ok(client: TestClient) -> None:
+    created = _start(client, attributes={"nm5.source": "cursor", "agent.framework": "cursor"})
+    done = client.post(
+        f"/v1/runs/{created['trace_id']}/finalize",
+        json={"status": "cancelled", "sequence": 1, "attributes": {"nm5.outcome": "cancelled"}},
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["lifecycle"] == "cancelled"
+    assert done.json()["status"] == "unset"
+    listing = client.get("/v1/traces", params={"lifecycle": "cancelled", "source": "cursor"})
+    assert created["trace_id"] in {row["trace_id"] for row in listing.json()}
+
+
 def test_batch_unset_stays_unknown_not_completed(client: TestClient) -> None:
     response = client.post("/v1/traces", json={"project_id": "legacy", "name": "unset-run"})
     assert response.status_code == 201

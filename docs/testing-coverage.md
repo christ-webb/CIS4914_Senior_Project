@@ -34,9 +34,13 @@ tests, without changing application behavior or another contributor's components
 - **Live SDK** (`packages/python-sdk/tests/test_live_client.py`): context
   managers, stable event IDs across retries, and telemetry vs agent errors.
 - **External collector** (`packages/collector/tests`): Codex hook mapping,
-  redaction, duplicate delivery, Stop vs finalize, hook install merge,
-  collector auth, and SQLite replay after restart. Live Codex
-  (`test_live_codex.py`) is skipped unless `NM5_TEST_CODEX=1`.
+  Cursor and VS Code Copilot adapters, OTLP JSON ingest, hook/OTel
+  correlation (hook-first, OTel-first, missing OTel, duplicates), SQLite
+  session-key migration, redaction, duplicate delivery, Stop vs finalize,
+  hook install merge, collector auth, and SQLite replay after restart. Live
+  Codex (`test_live_codex.py`) is skipped unless `NM5_TEST_CODEX=1`. Live
+  editor checks require `NM5_TEST_CURSOR=1` / `NM5_TEST_VSCODE=1` and are
+  otherwise documented as pending.
 
 ## Run checks from the repository root
 

@@ -20,7 +20,7 @@ from no_more_500s_api.domain.models import (
     Trace,
 )
 
-TERMINAL_LIFECYCLES = {RunLifecycle.COMPLETED, RunLifecycle.FAILED}
+TERMINAL_LIFECYCLES = {RunLifecycle.COMPLETED, RunLifecycle.FAILED, RunLifecycle.CANCELLED}
 
 
 class InvalidLifecycleError(ValueError):
@@ -102,7 +102,7 @@ def _merge_span(existing: Span | None, incoming: dict[str, Any], *, completing: 
     if incoming.get("name"):
         updates["name"] = incoming["name"]
     if incoming.get("type"):
-        updates["type"] = incoming["type"]
+        updates["type"] = SpanType(incoming["type"])
     if incoming.get("input") is not None and existing.input is None:
         updates["input"] = incoming["input"]
     if incoming.get("output") is not None:
@@ -183,17 +183,20 @@ def reconstruct_trace(
             if terminal:
                 continue
             terminal = True
-            stored_lifecycle = (
-                RunLifecycle.COMPLETED
-                if payload.get("status") == "completed"
-                else RunLifecycle.FAILED
-            )
-            status = (
-                SpanStatus.OK
-                if stored_lifecycle is RunLifecycle.COMPLETED
-                else SpanStatus.ERROR
-            )
+            raw_status = str(payload.get("status") or "")
+            if raw_status == "cancelled":
+                stored_lifecycle = RunLifecycle.CANCELLED
+                status = SpanStatus.UNSET
+            elif raw_status == "completed":
+                stored_lifecycle = RunLifecycle.COMPLETED
+                status = SpanStatus.OK
+            else:
+                stored_lifecycle = RunLifecycle.FAILED
+                status = SpanStatus.ERROR
             ended_at = _ensure_utc(event.occurred_at)
+            extra_attrs = payload.get("attributes")
+            if isinstance(extra_attrs, dict):
+                attributes = {**attributes, **extra_attrs}
             if payload.get("error"):
                 attributes = {**attributes, "error": payload["error"]}
             for agent_id, agent in list(spans.items()):
@@ -214,6 +217,9 @@ def reconstruct_trace(
         if event.event_type is RunEventType.HEARTBEAT:
             if terminal:
                 continue
+            extra = payload.get("attributes")
+            if isinstance(extra, dict):
+                attributes = {**attributes, **extra}
             if payload.get("progress"):
                 attributes = {**attributes, "progress": payload["progress"]}
             continue
@@ -342,7 +348,11 @@ def finalize_to_stored(
         sequence=finalize.sequence,
         occurred_at=_ensure_utc(finalize.occurred_at),
         received_at=_ensure_utc(received_at or datetime.now(UTC)),
-        payload={"status": finalize.status, "error": finalize.error},
+        payload={
+            "status": finalize.status,
+            "error": finalize.error,
+            "attributes": finalize.attributes,
+        },
     )
 
 

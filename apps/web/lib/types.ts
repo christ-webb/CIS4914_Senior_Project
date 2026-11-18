@@ -1,6 +1,6 @@
 export type SpanStatus = "unset" | "ok" | "error";
 export type SpanType = "agent" | "llm" | "tool" | "workflow";
-export type RunLifecycle = "running" | "completed" | "failed" | "interrupted" | "unknown";
+export type RunLifecycle = "running" | "completed" | "failed" | "cancelled" | "interrupted" | "unknown";
 
 export interface Span {
   span_id: string;

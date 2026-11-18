@@ -23,3 +23,10 @@ def event_id_for(occurrence_key: str) -> UUID:
 
 def span_id_for(kind: str, identity: str) -> UUID:
     return namespaced(f"span:{kind}:{identity}")
+
+
+def store_session_key(agent: str, session_id: str) -> str:
+    prefix = f"{agent}:"
+    if session_id.startswith(prefix):
+        return session_id
+    return f"{prefix}{session_id}"

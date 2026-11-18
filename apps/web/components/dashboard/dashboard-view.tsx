@@ -118,6 +118,9 @@ export function DashboardView() {
                         {trace.source && <span className="pill">{trace.source}</span>}
                         {trace.provider && <span className="pill">{trace.provider}</span>}
                         {trace.agent_framework && <span className="pill">{trace.agent_framework}</span>}
+                        {trace.instrumentation_coverage && (
+                          <small className="muted"> {trace.instrumentation_coverage}</small>
+                        )}
                         {trace.workspace && <small className="muted"> {trace.workspace}</small>}
                       </span>
                       <span className="muted">

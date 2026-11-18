@@ -5,6 +5,7 @@ from no_more_500s_api.domain.models import (
     RunEventType,
     RunLifecycle,
     SpanStatus,
+    SpanType,
     StoredRunEvent,
 )
 from no_more_500s_api.services.run_reconstruction import reconstruct_trace
@@ -78,6 +79,7 @@ def test_out_of_order_complete_then_start_does_not_downgrade_or_deflate_totals()
     assert span.cost_usd == 0.2
     assert span.output == {"done": True}
     assert span.name == "model"
+    assert span.type is SpanType.LLM
 
 
 def test_duplicate_event_id_does_not_inflate_tokens() -> None:
@@ -191,3 +193,28 @@ def test_finalize_then_late_complete_stays_terminal() -> None:
     assert trace.status is SpanStatus.OK
     assert trace.spans[0].token_count == 3
     assert trace.attributes.get("progress") is None
+
+
+def test_cancelled_finalize_is_not_success() -> None:
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    events = [
+        _event(
+            RunEventType.RUN_START,
+            0,
+            t0,
+            {"project_id": "p", "name": "run", "started_at": t0.isoformat()},
+        ),
+        _event(
+            RunEventType.FINALIZE,
+            1,
+            t0,
+            {
+                "status": "cancelled",
+                "attributes": {"nm5.outcome": "cancelled", "nm5.end_reason": "aborted"},
+            },
+        ),
+    ]
+    trace = reconstruct_trace(events, now=t0)
+    assert trace.lifecycle is RunLifecycle.CANCELLED
+    assert trace.status is SpanStatus.UNSET
+    assert trace.attributes["nm5.outcome"] == "cancelled"

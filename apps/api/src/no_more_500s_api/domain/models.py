@@ -23,6 +23,7 @@ class RunLifecycle(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
     UNKNOWN = "unknown"
 
@@ -89,7 +90,7 @@ class Trace(TraceCreate):
         duration = max((span.duration_ms for span in trace.spans), default=0)
         lifecycle = lifecycle_from_batch_status(trace.status)
         ended_at = None
-        if lifecycle in {RunLifecycle.COMPLETED, RunLifecycle.FAILED}:
+        if lifecycle in {RunLifecycle.COMPLETED, RunLifecycle.FAILED, RunLifecycle.CANCELLED}:
             ended_at = trace.started_at
         return cls(
             **trace.model_dump(),
@@ -193,8 +194,9 @@ class RunFinalize(BaseModel):
     event_id: UUID = Field(default_factory=uuid4)
     sequence: int = Field(default=0, ge=0)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "failed", "cancelled"]
     error: dict[str, Any] | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class StoredRunEvent(BaseModel):

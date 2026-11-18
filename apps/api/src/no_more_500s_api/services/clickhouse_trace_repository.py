@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Sequence
+from datetime import datetime
 from decimal import Decimal
 from threading import Lock
 from typing import Any, cast
@@ -50,6 +51,8 @@ from no_more_500s_api.services.trace_service import (
     TraceNotFoundError,
     TraceStorageError,
     apply_trace_list_query,
+    clickhouse_bind_datetime,
+    utc_datetime,
 )
 
 _ZERO_UUID = UUID(int=0)
@@ -289,8 +292,8 @@ class ClickHouseTraceRepository:
                     str(event.trace_id),
                     event.event_type.value,
                     event.sequence,
-                    event.occurred_at,
-                    event.received_at,
+                    clickhouse_bind_datetime(event.occurred_at),
+                    clickhouse_bind_datetime(event.received_at),
                     json.dumps(event.payload, default=str),
                 ]
             ],
@@ -341,7 +344,7 @@ class ClickHouseTraceRepository:
                     str(span.parent_span_id) if span.parent_span_id else None,
                     span.type.value,
                     span.name,
-                    span.started_at,
+                    clickhouse_bind_datetime(span.started_at),
                     span.duration_ms,
                     span.status.value,
                     span.token_count,
@@ -379,7 +382,7 @@ class ClickHouseTraceRepository:
                     str(trace.trace_id),
                     trace.project_id,
                     trace.name,
-                    trace.started_at,
+                    clickhouse_bind_datetime(trace.started_at),
                     trace.duration_ms,
                     trace.total_tokens,
                     Decimal(str(trace.total_cost_usd)),
@@ -455,7 +458,7 @@ class ClickHouseTraceRepository:
                 parent_span_id=row[1],
                 type=SpanType(row[2]),
                 name=row[3],
-                started_at=row[4],
+                started_at=_utc_column(row[4]),
                 duration_ms=row[5],
                 status=SpanStatus(row[6]),
                 token_count=row[7],
@@ -466,12 +469,14 @@ class ClickHouseTraceRepository:
             )
             for row in span_result.result_rows
         ]
+        started = _utc_column(started_at)
+        ended = started if parsed_status in {SpanStatus.OK, SpanStatus.ERROR} else None
 
         return Trace(
             trace_id=tid,
             project_id=project_id,
             name=name,
-            started_at=started_at,
+            started_at=started,
             status=parsed_status,
             attributes=_load(attributes_json) or {},
             spans=spans,
@@ -479,8 +484,8 @@ class ClickHouseTraceRepository:
             total_tokens=total_tokens,
             total_cost_usd=float(total_cost_usd),
             lifecycle=lifecycle_from_batch_status(parsed_status),
-            last_activity_at=started_at,
-            ended_at=started_at if parsed_status in {SpanStatus.OK, SpanStatus.ERROR} else None,
+            last_activity_at=started,
+            ended_at=ended,
         )
 
     def _list_unlocked(self, query: TraceListQuery) -> Sequence[TraceSummary]:
@@ -493,11 +498,11 @@ class ClickHouseTraceRepository:
             clauses.append("status = {status:String}")
             parameters["status"] = query.status.value
         if query.started_after is not None:
-            clauses.append("started_at >= {started_after:DateTime64(3)}")
-            parameters["started_after"] = query.started_after
+            clauses.append("started_at >= {started_after:DateTime64(3, 'UTC')}")
+            parameters["started_after"] = clickhouse_bind_datetime(query.started_after)
         if query.started_before is not None:
-            clauses.append("started_at <= {started_before:DateTime64(3)}")
-            parameters["started_before"] = query.started_before
+            clauses.append("started_at <= {started_before:DateTime64(3, 'UTC')}")
+            parameters["started_before"] = clickhouse_bind_datetime(query.started_before)
 
         result = self._client_or_raise().query(
             f"""
@@ -523,15 +528,15 @@ class ClickHouseTraceRepository:
                 trace_id=row[0],
                 project_id=row[1],
                 name=row[2],
-                started_at=row[3],
+                started_at=_utc_column(row[3]),
                 duration_ms=row[4],
                 total_tokens=row[5],
                 total_cost_usd=float(row[6]),
                 status=SpanStatus(row[7]),
                 lifecycle=lifecycle_from_batch_status(SpanStatus(row[7])),
-                last_activity_at=row[3],
+                last_activity_at=_utc_column(row[3]),
                 ended_at=(
-                    row[3]
+                    _utc_column(row[3])
                     if SpanStatus(row[7]) in {SpanStatus.OK, SpanStatus.ERROR}
                     else None
                 ),
@@ -542,6 +547,12 @@ class ClickHouseTraceRepository:
         return apply_trace_list_query(live_summaries + batch, query)
 
 
+def _utc_column(value: Any) -> datetime:
+    if not isinstance(value, datetime):
+        raise TypeError(f"expected datetime column, got {type(value)!r}")
+    return utc_datetime(value)
+
+
 def _row_to_event(row: Sequence[Any]) -> StoredRunEvent:
     payload = _load(row[6]) or {}
     return StoredRunEvent(
@@ -549,7 +560,7 @@ def _row_to_event(row: Sequence[Any]) -> StoredRunEvent:
         trace_id=row[1],
         event_type=RunEventType(row[2]),
         sequence=int(row[3]),
-        occurred_at=row[4],
-        received_at=row[5],
+        occurred_at=_utc_column(row[4]),
+        received_at=_utc_column(row[5]),
         payload=payload,
     )

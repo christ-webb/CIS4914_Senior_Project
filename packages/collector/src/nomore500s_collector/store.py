@@ -60,6 +60,20 @@ CREATE TABLE IF NOT EXISTS open_spans (
     started_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS pending_retry ON pending(next_retry_at);
+CREATE TABLE IF NOT EXISTS identity_links (
+    agent TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    canonical_id TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    PRIMARY KEY (agent, kind, source_id)
+);
+CREATE TABLE IF NOT EXISTS span_identities (
+    session_id TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    span_id TEXT NOT NULL,
+    PRIMARY KEY (session_id, identity)
+);
 """
 
 
@@ -89,9 +103,122 @@ class CollectorStore:
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        self._migrate()
 
     def close(self) -> None:
         self._conn.close()
+
+    def _meta(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row else None
+
+    def _set_meta(self, key: str, value: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO meta(key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
+        )
+
+    def _migrate(self) -> None:
+        version = int(self._meta("schema_version") or "1")
+        if version < 2:
+            self._migrate_session_keys()
+            self._set_meta("schema_version", "2")
+
+    def _migrate_session_keys(self) -> None:
+        rows = list(self._conn.execute("SELECT session_id, agent FROM sessions"))
+        for row in rows:
+            session_id = str(row["session_id"])
+            agent = str(row["agent"] or "codex")
+            prefix = f"{agent}:"
+            if session_id.startswith(prefix):
+                continue
+            new_id = f"{prefix}{session_id}"
+            self._conn.execute(
+                "UPDATE sessions SET session_id = ? WHERE session_id = ?",
+                (new_id, session_id),
+            )
+            self._conn.execute(
+                "UPDATE pending SET session_id = ? WHERE session_id = ?",
+                (new_id, session_id),
+            )
+            self._conn.execute(
+                "UPDATE open_spans SET session_id = ? WHERE session_id = ?",
+                (new_id, session_id),
+            )
+
+    def resolve_canonical(self, agent: str, kind: str, candidates: list[str]) -> str | None:
+        filtered = [item for item in candidates if item]
+        if not filtered:
+            return None
+        for item in filtered:
+            row = self._conn.execute(
+                """
+                SELECT canonical_id FROM identity_links
+                WHERE agent = ? AND kind = ? AND source_id = ?
+                """,
+                (agent, kind, item),
+            ).fetchone()
+            if row:
+                canonical = str(row["canonical_id"])
+                self.link_identities(agent, kind, filtered, canonical, "exact")
+                return canonical
+        unique = list(dict.fromkeys(filtered))
+        if len(unique) == 1:
+            self.link_identities(agent, kind, unique, unique[0], "exact")
+            return unique[0]
+        return None
+
+    def link_identities(
+        self,
+        agent: str,
+        kind: str,
+        source_ids: list[str],
+        canonical_id: str,
+        confidence: str,
+    ) -> None:
+        for source_id in source_ids:
+            if not source_id:
+                continue
+            self._conn.execute(
+                """
+                INSERT INTO identity_links(agent, kind, source_id, canonical_id, confidence)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(agent, kind, source_id) DO UPDATE SET
+                    canonical_id = excluded.canonical_id,
+                    confidence = excluded.confidence
+                """,
+                (agent, kind, source_id, canonical_id, confidence),
+            )
+
+    def span_id_for_identities(self, session_id: str, identities: list[str]) -> str | None:
+        for identity in identities:
+            row = self._conn.execute(
+                "SELECT span_id FROM span_identities WHERE session_id = ? AND identity = ?",
+                (session_id, identity),
+            ).fetchone()
+            if row:
+                found = str(row["span_id"])
+                self.remember_span_identities(session_id, identities, found)
+                return found
+        return None
+
+    def remember_span_identities(
+        self, session_id: str, identities: list[str], span_id: str
+    ) -> None:
+        for identity in identities:
+            if not identity:
+                continue
+            self._conn.execute(
+                """
+                INSERT INTO span_identities(session_id, identity, span_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_id, identity) DO UPDATE SET span_id = excluded.span_id
+                """,
+                (session_id, identity, span_id),
+            )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
