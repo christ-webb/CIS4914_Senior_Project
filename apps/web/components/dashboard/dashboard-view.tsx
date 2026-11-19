@@ -7,6 +7,7 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { usePolling } from "@/hooks/use-polling";
 import { fetchTraces } from "@/lib/api";
 import { aggregateEstimatedCost, compactCost, ordinaryRuns } from "@/lib/cost-aggregation";
+import { sourceLabel } from "@/lib/presentation";
 import { recentCompletedTurns, sessionLabel, sessionOutcomes, TASK_OUTCOME_LABELS, turnCompletion, turnLabel, turnSummary } from "@/lib/outcomes";
 import { computeStats, formatCompact, formatDuration, isMeasuredTokens, isMeasuredCost } from "@/lib/stats";
 import { isExecutingRun, isIdleOpenRun, type TraceSummary } from "@/lib/types";
@@ -29,7 +30,7 @@ function RunRow({ trace, kind }: { trace: TraceSummary; kind: "active" | "turn" 
   const primary = kind === "session" ? sessionLabel(trace) : kind === "active" ? "Executing" : kind === "idle" ? "Idle / Open" : "Turn completed";
   const secondary = kind === "turn" ? sessionLabel(trace) : kind === "active" ? null : turns.latest ? turnLabel(trace) : null;
   return <Link href={`/traces/${trace.trace_id}`} className="active-run-row">
-    <span className="run-main"><strong>{trace.name}</strong><small className="muted">{trace.source ?? trace.agent_framework ?? "Source not reported"}{trace.is_fixture ? " · fixture" : ""}{turns.total > 1 ? ` · ${turns.completed}/${turns.total} turns completed` : ""}</small></span>
+    <span className="run-main"><strong>{trace.name}</strong><small className="muted">{sourceLabel(trace.source, trace.agent_framework)}{trace.is_fixture ? " · fixture" : ""}{turns.total > 1 ? ` · ${turns.completed}/${turns.total} turns completed` : ""}</small></span>
     <span className="run-side">
       <span className="pill-row">
         <span className={pillClass(primary)}>{primary}</span>

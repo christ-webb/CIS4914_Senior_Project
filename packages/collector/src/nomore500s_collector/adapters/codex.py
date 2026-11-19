@@ -5,6 +5,13 @@ from typing import Any
 from uuid import UUID
 
 from nomore500s_collector.adapters.base import MappedEvent, SessionPlan
+from nomore500s_collector.codex_surface import (
+    LAUNCHER_FIELD,
+    ORIGINATOR_FIELD,
+    UNKNOWN_SURFACE,
+    VERSION_FIELD,
+    surface_for,
+)
 from nomore500s_collector.ids import (
     agent_span_id_for_session,
     event_id_for,
@@ -29,7 +36,10 @@ SUPPORTED_HOOKS = {
     "Interrupt",
     "PreModelRequest",
     "PostModelRequest",
+    "CodexExecExit",
 }
+# Emitted by the optional `nm5-codex-exec` launcher after the Codex process exits.
+EXEC_EXIT_EVENT = "CodexExecExit"
 
 STABLE_TOOL_EVENTS = {"PreToolUse", "PostToolUse"}
 STABLE_SUBAGENT_EVENTS = {"SubagentStart", "SubagentStop"}
@@ -76,6 +86,24 @@ def _turn_attributes(payload: dict[str, Any]) -> dict[str, Any]:
     return {"nm5.turn_id": str(turn_id)} if isinstance(turn_id, str) and turn_id else {}
 
 
+def _surface_attributes(payload: dict[str, Any]) -> dict[str, Any]:
+    """Latest observed surface; never overrides the start-time ``nm5.source``."""
+    surface = surface_for(payload)
+    return {} if surface == UNKNOWN_SURFACE else {"nm5.codex.last_surface": surface}
+
+
+def _exit_status(payload: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    signal = payload.get("signal")
+    if isinstance(signal, (int, str)) and str(signal):
+        return "cancelled", {"reason": "signal", "signal": str(signal)[:32]}
+    code = payload.get("exit_code")
+    if isinstance(code, bool) or not isinstance(code, int):
+        return "failed", {"reason": "exit_status_unavailable"}
+    if code == 0:
+        return "completed", None
+    return "failed", {"reason": "nonzero_exit", "exit_code": code}
+
+
 def occurrence_key(payload: dict[str, Any], delivery_id: str) -> str:
     event = str(payload.get("hook_event_name") or "")
     session_id = str(payload.get("session_id") or "")
@@ -83,6 +111,8 @@ def occurrence_key(payload: dict[str, Any], delivery_id: str) -> str:
         return f"codex:{session_id}:SessionStart"
     if event == "SessionEnd":
         return f"codex:{session_id}:SessionEnd"
+    if event == EXEC_EXIT_EVENT:
+        return f"codex:{session_id}:{EXEC_EXIT_EVENT}"
     if event in STABLE_TOOL_EVENTS:
         tool_use_id = payload.get("tool_use_id")
         if tool_use_id:
@@ -243,6 +273,20 @@ class CodexAdapter:
                 ],
             )
 
+        if event == "SessionEnd" and payload.get(LAUNCHER_FIELD):
+            # The nm5-codex-exec launcher finalizes from the process exit status,
+            # which is stronger evidence than SessionEnd(reason=other).
+            return SessionPlan(
+                session_id=session_id,
+                agent=AGENT,
+                occurrence_key=key,
+                coverage_event=event,
+                occurred_at=occurred,
+                workspace=workspace,
+                model=model,
+                events=[self._heartbeat(session_id, key, occurred, event, payload)],
+            )
+
         if event == "SessionEnd":
             reason = str(payload.get("reason") or "other")
             status = "failed" if reason in {"error", "failed"} else "completed"
@@ -254,7 +298,33 @@ class CodexAdapter:
                 occurred_at=occurred,
                 workspace=workspace,
                 model=model,
-                events=[self._finalize(session_id, key, occurred, status, reason)],
+                events=[
+                    self._finalize(
+                        session_id,
+                        key,
+                        occurred,
+                        status,
+                        None if status == "completed" else {"reason": reason},
+                        evidence="codex.SessionEnd",
+                    )
+                ],
+            )
+
+        if event == EXEC_EXIT_EVENT:
+            status, error = _exit_status(payload)
+            return SessionPlan(
+                session_id=session_id,
+                agent=AGENT,
+                occurrence_key=key,
+                coverage_event=event,
+                occurred_at=occurred,
+                workspace=workspace,
+                model=model,
+                events=[
+                    self._finalize(
+                        session_id, key, occurred, status, error, evidence="nm5-codex-exec.exit"
+                    )
+                ],
             )
 
         return SessionPlan(
@@ -283,20 +353,30 @@ class CodexAdapter:
         workspace: str | None,
         model: str | None,
     ) -> MappedEvent:
+        surface = surface_for(payload)
         attributes = {
             "agent.framework": "codex",
             "gen_ai.provider": "openai",
-            "nm5.source": "cli",
+            "nm5.source": surface,
+            "nm5.surface": surface,
             "nm5.agent": "codex",
             "nm5.instrumentation": "hooks",
             "nm5.cost_status": "unavailable",
             "nm5.token_status": "unavailable",
             "nm5.coverage": (
-                "lifecycle+tools; model unavailable unless Codex >=0.164; "
-                "cost unavailable"
+                "lifecycle+turns+tools; tool exit status, model calls, tokens, cost unavailable"
             ),
             "nm5.session_id": session_id,
         }
+        originator = payload.get(ORIGINATOR_FIELD)
+        if isinstance(originator, str) and originator:
+            attributes["nm5.codex.originator"] = originator
+        version = payload.get(VERSION_FIELD)
+        if isinstance(version, str) and version:
+            attributes["nm5.codex.version"] = version
+        launcher = payload.get(LAUNCHER_FIELD)
+        if isinstance(launcher, str) and launcher:
+            attributes["nm5.launcher"] = launcher
         if workspace:
             attributes["nm5.workspace"] = workspace
         if model:
@@ -336,7 +416,7 @@ class CodexAdapter:
             "progress": progress,
             "_trace_id": str(self._trace(session_id)),
         }
-        attributes = _turn_attributes(payload)
+        attributes = {**_turn_attributes(payload), **_surface_attributes(payload)}
         if progress in TURN_STATUS_BY_EVENT:
             attributes["nm5.turn_status"] = TURN_STATUS_BY_EVENT[progress]
             attributes["nm5.turn_evidence"] = f"codex.{progress}"
@@ -379,7 +459,10 @@ class CodexAdapter:
     ) -> MappedEvent:
         tool_use_id = str(payload.get("tool_use_id") or key)
         tool_name = str(payload.get("tool_name") or "tool")[:200]
-        status = "error" if payload.get("error") else "ok"
+        # Codex reports tool_response as free text with no structured exit status,
+        # so "ok" only means the call returned. Never infer pass/fail from text.
+        explicit_error = bool(payload.get("error"))
+        status = "error" if explicit_error else "ok"
         duration = payload.get("duration_ms")
         body: dict[str, Any] = {
             "event_id": str(event_id_for(key)),
@@ -393,6 +476,7 @@ class CodexAdapter:
             "attributes": {
                 "tool.name": tool_name,
                 "nm5.tool_use_id": tool_use_id,
+                "nm5.tool_outcome": "error" if explicit_error else "unreported",
                 **_turn_attributes(payload),
             },
             "_trace_id": str(self._trace(session_id)),
@@ -516,16 +600,25 @@ class CodexAdapter:
         return MappedEvent(event_id=event_id_for(key), kind="events", payload=body)
 
     def _finalize(
-        self, session_id: str, key: str, occurred: datetime, status: str, reason: str
+        self,
+        session_id: str,
+        key: str,
+        occurred: datetime,
+        status: str,
+        error: dict[str, Any] | None,
+        *,
+        evidence: str,
     ) -> MappedEvent:
         return MappedEvent(
             event_id=event_id_for(key),
             kind="finalize",
+            critical=True,
             payload={
                 "event_id": str(event_id_for(key)),
                 "occurred_at": _iso(occurred),
                 "status": status,
-                "error": None if status == "completed" else {"reason": reason},
+                "error": error,
+                "attributes": {"nm5.terminal_evidence": evidence},
                 "_trace_id": str(self._trace(session_id)),
             },
         )

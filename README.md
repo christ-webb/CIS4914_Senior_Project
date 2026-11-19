@@ -68,7 +68,7 @@ uses the same live SDK against the real model.
 
 To observe a real Codex CLI session, start `make collector`, run
 `uv run nm5-codex-install-hooks`, then use `codex` as usual. See
-[docs/integrations/codex-cli.md](docs/integrations/codex-cli.md).
+[docs/integrations/codex.md](docs/integrations/codex.md).
 Cursor: `uv run nm5-cursor-install-hooks`. VS Code Copilot:
 `uv run nm5-vscode-install-hooks` (add `--enable-otel` for model/token spans).
 

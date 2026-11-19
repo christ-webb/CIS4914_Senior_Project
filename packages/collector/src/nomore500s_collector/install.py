@@ -23,7 +23,15 @@ CODEX_EVENTS_V153 = [
     "Stop",
     "Interrupt",
 ]
+# Not present in the installed Codex binaries (CLI 0.153.4, IDE-bundled 0.169.0-alpha);
+# kept behind a hidden flag for forward compatibility only.
 MODEL_EVENTS = ["PreModelRequest", "PostModelRequest"]
+# Lifecycle evidence must not be lost when a one-shot `codex exec` process exits
+# before an async handler finishes, so these run synchronously (bounded timeout).
+SYNC_EVENTS = frozenset({"SessionStart", "SessionEnd", "Stop", "Interrupt"})
+SYNC_TIMEOUT_SECONDS = 3
+ASYNC_TIMEOUT_SECONDS = 2
+WRAPPER_NAME = "nm5-codex-hook"
 
 
 def default_codex_home() -> Path:
@@ -37,21 +45,43 @@ def hooks_path(codex_home: Path | None = None) -> Path:
     return (codex_home or default_codex_home()) / "hooks.json"
 
 
-def hook_command(python_executable: str | None = None) -> str:
+def wrapper_path(codex_home: Path | None = None) -> Path:
+    return (codex_home or default_codex_home()) / "hooks" / WRAPPER_NAME
+
+
+def write_wrapper(
+    codex_home: Path | None = None,
+    *,
+    python_executable: Path | None = None,
+    debug: bool = False,
+) -> Path:
+    from nomore500s_collector.install_cursor import wrapper_script
+
+    path = wrapper_path(codex_home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        wrapper_script(
+            python_executable, debug=debug, name=WRAPPER_NAME, entrypoint="hook_main"
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def hook_command(python_executable: str | None = None) -> str | None:
     executable = python_executable or os.environ.get("NM5_HOOK_COMMAND")
-    if executable:
-        return executable
-    return "nm5-codex-hook"
+    return executable or None
 
 
-def nm5_handler(command: str) -> dict[str, Any]:
-    return {
-        "type": "command",
-        "command": command,
-        "async": True,
-        "timeout": 2,
-        "statusMessage": STATUS_MESSAGE,
-    }
+def nm5_handler(command: str, *, event: str | None = None) -> dict[str, Any]:
+    sync = event in SYNC_EVENTS
+    handler: dict[str, Any] = {"type": "command", "command": command}
+    if not sync:
+        handler["async"] = True
+    handler["timeout"] = SYNC_TIMEOUT_SECONDS if sync else ASYNC_TIMEOUT_SECONDS
+    handler["statusMessage"] = STATUS_MESSAGE
+    return handler
 
 
 def is_nm5_handler(handler: dict[str, Any]) -> bool:
@@ -95,11 +125,23 @@ def install_hooks(
     codex_home: Path | None = None,
     command: str | None = None,
     include_model_hooks: bool = False,
+    python_executable: Path | None = None,
+    debug: bool = False,
 ) -> Path:
     path = hooks_path(codex_home)
     document = _load(path)
     backup_hooks(path)
-    handler = nm5_handler(hook_command(command))
+    command_value = hook_command(command)
+    if command_value is None:
+        # Absolute path: Codex (and the IDE extension's app-server) does not
+        # inherit the project virtualenv PATH.
+        command_value = str(
+            write_wrapper(
+                codex_home or default_codex_home(),
+                python_executable=python_executable,
+                debug=debug,
+            ).absolute()
+        )
     hooks: dict[str, Any] = document.setdefault("hooks", {})
     events = list(CODEX_EVENTS_V153)
     if include_model_hooks:
@@ -109,19 +151,28 @@ def install_hooks(
         if not isinstance(groups, list):
             groups = []
             hooks[event] = groups
-        already = False
+        handler = nm5_handler(command_value, event=event)
+        replaced = False
         for group in groups:
             if not isinstance(group, dict):
                 continue
             handlers = group.get("hooks")
             if not isinstance(handlers, list):
                 continue
-            if any(isinstance(item, dict) and is_nm5_handler(item) for item in handlers):
-                already = True
+            for index, item in enumerate(handlers):
+                if isinstance(item, dict) and is_nm5_handler(item):
+                    if not replaced:
+                        handlers[index] = handler
+                        replaced = True
+            if replaced:
+                group["hooks"] = [
+                    item
+                    for item in handlers
+                    if item is handler or not (isinstance(item, dict) and is_nm5_handler(item))
+                ]
                 break
-        if already:
-            continue
-        groups.append({"hooks": [handler]})
+        if not replaced:
+            groups.append({"hooks": [handler]})
     _atomic_write(path, document)
     return path
 
@@ -156,4 +207,7 @@ def uninstall_hooks(*, codex_home: Path | None = None) -> Path:
             hooks.pop(event, None)
     document["hooks"] = hooks
     _atomic_write(path, document)
+    installed_wrapper = wrapper_path(codex_home)
+    if installed_wrapper.exists() and installed_wrapper.name == WRAPPER_NAME:
+        installed_wrapper.unlink()
     return path

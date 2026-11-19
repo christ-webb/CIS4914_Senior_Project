@@ -157,7 +157,11 @@ export function TraceExplorer() {
             onChange={(event) => replaceParams({ source: event.target.value || undefined, page: undefined })}
           >
             <option value="">All sources</option>
-            <option value="cli">Codex CLI</option>
+            <option value="codex">Codex (all surfaces)</option>
+            <option value="codex-cli">Codex CLI</option>
+            <option value="codex-exec">Codex exec</option>
+            <option value="codex-ide">Codex IDE</option>
+            <option value="cli">Codex CLI (legacy)</option>
             <option value="cursor">Cursor</option>
             <option value="vscode">VS Code Copilot</option>
           </select>

@@ -119,7 +119,10 @@ def apply_trace_list_query(
         items = [item for item in items if item.status == query.status]
     if query.lifecycle is not None:
         items = [item for item in items if item.lifecycle == query.lifecycle]
-    if query.source is not None:
+    if query.source == "codex":
+        # Umbrella filter: every Codex surface (CLI, exec, IDE) plus legacy "cli".
+        items = [item for item in items if item.agent_framework == "codex"]
+    elif query.source is not None:
         items = [item for item in items if item.source == query.source]
     if query.provider is not None:
         items = [item for item in items if item.provider == query.provider]

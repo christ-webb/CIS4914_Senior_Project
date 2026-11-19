@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -10,10 +11,16 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from nomore500s_collector.codex_surface import LAUNCHER_FIELD, ORIGINATOR_FIELD, stamp_surface
 from nomore500s_collector.creation_evidence import stamp
 
 HOOK_OK = b"{}\n"
 MAX_HOOK_LOG_BYTES = 256 * 1024
+# Total delivery budget across retries; must stay below the Codex handler timeout.
+DELIVERY_BUDGET_SECONDS = 2.0
+PER_ATTEMPT_TIMEOUT_SECONDS = 1.0
+LAUNCH_FILE_ENV = "NM5_CODEX_LAUNCH_FILE"
+LAUNCHER_ENV = "NM5_CODEX_LAUNCHER"
 
 
 def collector_url() -> str:
@@ -127,7 +134,11 @@ def post_hook(payload: dict[str, Any], delivery_id: str, *, source: str | None =
     }
     if source:
         headers["X-NM5-Source"] = source
+    deadline = time.monotonic() + DELIVERY_BUDGET_SECONDS
     for attempt in range(3):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.05:
+            break
         request = Request(
             f"{collector_url()}/v1/collector/events",
             data=data,
@@ -135,7 +146,7 @@ def post_hook(payload: dict[str, Any], delivery_id: str, *, source: str | None =
             headers=headers,
         )
         try:
-            with urlopen(request, timeout=1.5) as response:
+            with urlopen(request, timeout=min(PER_ATTEMPT_TIMEOUT_SECONDS, remaining)) as response:
                 http_status = getattr(response, "status", 200)
                 result, reason = _parse_collector_result(response.read())
             append_hook_debug(
@@ -184,6 +195,75 @@ def post_hook(payload: dict[str, Any], delivery_id: str, *, source: str | None =
     return "undelivered"
 
 
+def _shape(value: Any) -> str:
+    if isinstance(value, dict):
+        return "{" + ",".join(sorted(str(key) for key in value)[:24]) + "}"
+    if isinstance(value, list):
+        return f"list[{len(value)}]"
+    return type(value).__name__
+
+
+PROBE_ENUM_FIELDS = ("source", "reason", "stop_hook_active", "permission_mode", "trigger")
+
+
+def _probe_line(payload: dict[str, Any]) -> str:
+    """Privacy-preserving payload shape for capability probing (key names/types only)."""
+    parts = [
+        "codex_probe",
+        f"event={payload.get('hook_event_name') or 'unknown'}",
+        "keys=" + ",".join(sorted(str(key) for key in payload if not str(key).startswith("_"))),
+        f"originator={payload.get(ORIGINATOR_FIELD) or 'none'}",
+    ]
+    for key in PROBE_ENUM_FIELDS:
+        value = payload.get(key)
+        if isinstance(value, bool) or (isinstance(value, str) and len(value) <= 32):
+            parts.append(f"{key}={value}")
+    response = payload.get("tool_response")
+    if response is not None:
+        parts.append(f"tool_response={_shape(response)}")
+        if isinstance(response, dict):
+            for key, inner in sorted(response.items())[:24]:
+                if isinstance(inner, (bool, int, float)) or inner is None:
+                    parts.append(f"tool_response.{key}={inner!r}")
+                else:
+                    parts.append(f"tool_response.{key}:{_shape(inner)}")
+    return " ".join(parts)
+
+
+def _record_launch(payload: dict[str, Any]) -> None:
+    """Hand the provider session id to an `nm5-codex-exec` launcher, if any."""
+    target = os.environ.get(LAUNCH_FILE_ENV)
+    session_id = payload.get("session_id")
+    if not target or not isinstance(session_id, str) or not session_id:
+        return
+    if str(payload.get("hook_event_name") or "") != "SessionStart":
+        return
+    try:
+        path = Path(target)
+        if not path.exists():
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(session_id)
+    except OSError:
+        return
+
+
+def _prepare_codex(payload: dict[str, Any]) -> None:
+    stamp_surface(payload)
+    launcher = os.environ.get(LAUNCHER_ENV)
+    if launcher == "nm5-codex-exec":
+        payload[LAUNCHER_FIELD] = launcher
+        _record_launch(payload)
+    if os.environ.get("NM5_HOOK_PROBE", "").strip().lower() in {"1", "true", "yes"}:
+        previous = os.environ.get("NM5_HOOK_DEBUG")
+        os.environ["NM5_HOOK_DEBUG"] = "1"
+        append_hook_debug(_probe_line(payload))
+        if previous is None:
+            os.environ.pop("NM5_HOOK_DEBUG", None)
+        else:
+            os.environ["NM5_HOOK_DEBUG"] = previous
+
+
 def run_hook(stdin: str | None = None, *, source: str | None = None) -> int:
     raw = sys.stdin.read() if stdin is None else stdin
     try:
@@ -196,6 +276,8 @@ def run_hook(stdin: str | None = None, *, source: str | None = None) -> int:
         append_hook_debug("python_hook event=non_object status=ignored")
         sys.stdout.buffer.write(HOOK_OK)
         return 0
+    if source == "codex":
+        _prepare_codex(payload)
     stamp(payload, source)
     delivery_id = str(uuid.uuid4())
     try:

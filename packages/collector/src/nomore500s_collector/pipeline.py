@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -9,6 +10,7 @@ from nomore500s_collector.adapters.base import Adapter
 from nomore500s_collector.adapters.codex import CodexAdapter
 from nomore500s_collector.adapters.router import select_adapter
 from nomore500s_collector.api_client import DeliveryError, LiveRunClient
+from nomore500s_collector.codex_surface import UNKNOWN_SURFACE, surface_for
 from nomore500s_collector.creation_evidence import payload_identities, verify
 from nomore500s_collector.ids import (
     agent_span_id_for_session,
@@ -21,6 +23,8 @@ from nomore500s_collector.store import CollectorStore
 
 logger = logging.getLogger("nomore500s.collector")
 
+DIAGNOSTICS_KEY = "diagnostics_v1"
+MAX_DIAGNOSTIC_KEYS = 256
 OVERFLOW_DROP_HEARTBEATS = "dropped_heartbeats"
 OVERFLOW_REJECT = "reject"
 
@@ -46,6 +50,60 @@ class Pipeline:
         self.adapter = adapter
         self.last_flush_error: str | None = None
 
+    # -- bounded, privacy-preserving outcome counters (no ids, no content) --
+
+    def _diagnostics(self) -> dict[str, Any]:
+        raw = self.store._meta(DIAGNOSTICS_KEY)
+        try:
+            value = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            value = {}
+        if not isinstance(value, dict):
+            value = {}
+        value.setdefault("outcomes", {})
+        value.setdefault("last_accepted", {})
+        return value
+
+    def record_outcome(
+        self, agent: str, surface: str, status: str, reason: str | None = None
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        with self.store.transaction():
+            data = self._diagnostics()
+            outcomes: dict[str, Any] = data["outcomes"]
+            key = "|".join([agent[:32], surface[:32], status[:48], (reason or "-")[:48]])
+            if key not in outcomes and len(outcomes) >= MAX_DIAGNOSTIC_KEYS:
+                key = "|".join([agent[:32], surface[:32], "overflow", "-"])
+            entry = outcomes.setdefault(key, {"count": 0, "last_at": None})
+            entry["count"] = int(entry.get("count") or 0) + 1
+            entry["last_at"] = now
+            if status == "accepted":
+                data["last_accepted"][surface[:32]] = now
+            self.store._set_meta(DIAGNOSTICS_KEY, json.dumps(data, sort_keys=True))
+
+    def diagnostics(self) -> dict[str, Any]:
+        data = self._diagnostics()
+        outcomes = []
+        for key, entry in sorted(data["outcomes"].items()):
+            agent, surface, status, reason = (key.split("|") + ["-"] * 4)[:4]
+            outcomes.append(
+                {
+                    "agent": agent,
+                    "surface": surface,
+                    "status": status,
+                    "reason": None if reason == "-" else reason,
+                    "count": entry.get("count", 0),
+                    "last_at": entry.get("last_at"),
+                }
+            )
+        return {"outcomes": outcomes, "last_accepted": data["last_accepted"]}
+
+    @staticmethod
+    def _surface(agent: str, payload: dict[str, Any]) -> str:
+        if agent == "codex":
+            return surface_for(payload)
+        return agent or UNKNOWN_SURFACE
+
     def ingest(
         self,
         payload: dict[str, Any],
@@ -55,6 +113,22 @@ class Pipeline:
     ) -> dict[str, Any]:
         cleaned = redact_payload(normalize_hook_payload(payload), collect_io=self.collect_io)
         adapter = self.adapter or select_adapter(cleaned, source)
+        result = self._ingest(cleaned, delivery_id, adapter)
+        status = str(result.get("status") or "unknown")
+        reason = result.get("reason")
+        if status == "ignored":
+            reason = "unsupported_event"
+        self.record_outcome(
+            adapter.name,
+            self._surface(adapter.name, cleaned),
+            status,
+            str(reason) if reason else None,
+        )
+        return result
+
+    def _ingest(
+        self, cleaned: dict[str, Any], delivery_id: str, adapter: Adapter
+    ) -> dict[str, Any]:
         with self.store.transaction():
             allowed, reason = self._after_reset_allowed(adapter.name, cleaned)
             if not allowed:
@@ -330,15 +404,22 @@ class Pipeline:
         body.pop("_parent_identities", None)
         body.pop("_span_kind", None)
         if kind == "start":
-            self.client.post("/v1/runs", body)
-            return
-        if kind == "events":
-            self.client.post(f"/v1/runs/{trace_id}/events", [body])
-            return
-        if kind == "finalize":
-            self.client.post(f"/v1/runs/{trace_id}/finalize", body)
-            return
-        raise DeliveryError(f"unknown kind {kind}", retryable=False)
+            path = "/v1/runs"
+            sent: Any = body
+        elif kind == "events":
+            path = f"/v1/runs/{trace_id}/events"
+            sent = [body]
+        elif kind == "finalize":
+            path = f"/v1/runs/{trace_id}/finalize"
+            sent = body
+        else:
+            raise DeliveryError(f"unknown kind {kind}", retryable=False)
+        if self.client.post(path, sent) == 409:
+            # The API refused the transition (e.g. an event after finalize). The
+            # completed run is intentionally not reopened; record the drop.
+            self.record_outcome(
+                str(session["agent"]), str(session["agent"]), "api_conflict", f"{kind}_dropped"
+            )
 
 
 __all__ = ["CodexAdapter", "OverflowError", "Pipeline"]

@@ -111,6 +111,19 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
             "adapters": ["codex", "cursor", "vscode-copilot", "otel"],
         }
 
+    @app.get("/v1/collector/diagnostics")
+    def diagnostics(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        app_runtime = current()
+        if not _authorized(app_runtime, authorization):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return {
+            "pending": app_runtime.store.pending_count(),
+            "last_flush_error": app_runtime.pipeline.last_flush_error,
+            "history_generation": int(app_runtime.store._meta("history_generation") or "0"),
+            "requires_session_creation_evidence": bool(app_runtime.store._meta("history_boundary")),
+            **app_runtime.pipeline.diagnostics(),
+        }
+
     @app.post("/v1/collector/events")
     async def ingest(
         request: Request,
@@ -129,9 +142,21 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise HTTPException(status_code=400, detail="Invalid JSON") from error
         if not isinstance(payload, dict):
+            label = x_nm5_source or "unknown"
+            app_runtime.pipeline.record_outcome(label, label, "invalid_payload", "non_object")
             raise HTTPException(status_code=422, detail="Hook payload must be an object")
         normalized = normalize_hook_payload(payload)
         if not normalized.get("hook_event_name") or not normalized.get("session_id"):
+            app_runtime.pipeline.record_outcome(
+                x_nm5_source or "unknown",
+                x_nm5_source or "unknown",
+                "invalid_payload",
+                (
+                    "missing_session_identity"
+                    if normalized.get("hook_event_name")
+                    else "missing_event"
+                ),
+            )
             raise HTTPException(
                 status_code=422,
                 detail="session_id and hook_event_name are required",
@@ -142,6 +167,9 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
         try:
             result = app_runtime.pipeline.ingest(normalized, delivery_id, source=x_nm5_source)
         except OverflowError as error:
+            app_runtime.pipeline.record_outcome(
+                x_nm5_source or "unknown", x_nm5_source or "unknown", "collector_overflow"
+            )
             raise HTTPException(status_code=503, detail=str(error)) from error
         return JSONResponse(
             result, status_code=409 if result.get("status") == "rejected_reset_boundary" else 202

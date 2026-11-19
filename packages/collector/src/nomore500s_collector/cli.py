@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import shutil
+import signal
+import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 import uvicorn
@@ -51,6 +57,56 @@ def hook_main() -> int:
     return run_hook(source="codex")
 
 
+def codex_exec_main(argv: list[str] | None = None) -> int:
+    """Optional launcher: `nm5-codex-exec [codex exec args...]`.
+
+    Runs `codex exec` unchanged (stdio passed through) and, after it exits,
+    reports the process exit status for the session the hooks observed. Only
+    runs started through this launcher get exit-status evidence.
+    """
+    from nomore500s_collector.hook import LAUNCH_FILE_ENV, LAUNCHER_ENV, post_hook
+
+    args = list(sys.argv[1:] if argv is None else argv)
+    codex = os.environ.get("NM5_CODEX_BIN") or shutil.which("codex")
+    if not codex:
+        print("nm5-codex-exec: codex executable not found on PATH", file=sys.stderr)
+        return 127
+    with tempfile.TemporaryDirectory(prefix="nm5-codex-exec-") as tmp:
+        launch_file = Path(tmp) / "session"
+        env = dict(os.environ)
+        env[LAUNCHER_ENV] = "nm5-codex-exec"
+        env[LAUNCH_FILE_ENV] = str(launch_file)
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            child = subprocess.Popen([codex, "exec", *args], env=env)
+            returncode = child.wait()
+        finally:
+            signal.signal(signal.SIGINT, previous)
+        session_id = ""
+        try:
+            session_id = launch_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            session_id = ""
+        if session_id:
+            payload: dict[str, object] = {
+                "hook_event_name": "CodexExecExit",
+                "session_id": session_id,
+                "_nm5_launcher": "nm5-codex-exec",
+            }
+            if returncode < 0:
+                payload["signal"] = -returncode
+            else:
+                payload["exit_code"] = returncode
+            post_hook(payload, str(uuid.uuid4()), source="codex")
+        else:
+            print(
+                "nm5-codex-exec: no Codex SessionStart hook observed; exit status not reported "
+                "(are the hooks installed and trusted? run nm5-codex-doctor)",
+                file=sys.stderr,
+            )
+    return returncode if returncode >= 0 else 128 - returncode
+
+
 def cursor_hook_main() -> int:
     return run_hook(source="cursor")
 
@@ -63,21 +119,42 @@ def install_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install No More 500s Codex hooks")
     parser.add_argument("--codex-home", type=Path, default=None)
     parser.add_argument("--command", default=None)
-    parser.add_argument(
-        "--include-model-hooks",
-        action="store_true",
-        help="Also register PreModelRequest/PostModelRequest (Codex >= 0.164)",
-    )
+    parser.add_argument("--include-model-hooks", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--debug", action="store_true", help="Enable bounded hook debug logging")
     args = parser.parse_args(argv)
     path = install_hooks(
         codex_home=args.codex_home or default_codex_home(),
         command=args.command,
         include_model_hooks=args.include_model_hooks,
+        debug=args.debug,
     )
     print(f"Installed collector hooks in {path}")
-    print("Review and trust them in Codex with /hooks if prompted.")
-    print("SessionEnd is never treated as optional Stop; Stop does not end the run.")
+    print(
+        "Hooks changed: open `codex`, run /hooks, and trust the No More 500s collector hooks.\n"
+        "Trust is required for interactive codex, codex exec, and the Codex IDE extension\n"
+        "(they share ~/.codex). Re-trust after every reinstall. Verify with nm5-codex-doctor."
+    )
     return 0
+
+
+def codex_doctor_main(argv: list[str] | None = None) -> int:
+    import json as _json
+
+    from nomore500s_collector.doctor import as_json, render, run_doctor
+
+    parser = argparse.ArgumentParser(description="Read-only Codex integration preflight")
+    parser.add_argument("--codex-home", type=Path, default=None)
+    parser.add_argument("--api-url", default=None)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--hook-smoke",
+        action="store_true",
+        help="Run the installed wrapper once with an unsupported probe event (creates no run)",
+    )
+    args = parser.parse_args(argv)
+    report = run_doctor(codex_home=args.codex_home, api_url=args.api_url, smoke=args.hook_smoke)
+    print(_json.dumps(as_json(report), indent=2) if args.json else render(report))
+    return 0 if report.configured_ready else 1
 
 
 def uninstall_main(argv: list[str] | None = None) -> int:

@@ -25,6 +25,8 @@ def select_adapter(payload: dict[str, Any], source: str | None = None) -> Adapte
         return _OTEL
     if named in {"codex", "cli"}:
         return _CODEX
+    if payload.get("_nm5_codex_originator") or payload.get("hook_event_name") == "CodexExecExit":
+        return _CODEX
     if payload.get("hook_event_name") == "OtelSpan" or payload.get("otel_span_id"):
         return _OTEL
     if payload.get("cursor_version") or payload.get("composer_mode") is not None:

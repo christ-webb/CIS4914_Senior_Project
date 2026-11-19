@@ -96,6 +96,7 @@ def test_codex_exec_session_appears_on_api(tmp_path: Path) -> None:
             ],
             cwd=workspace,
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=180,
@@ -115,12 +116,20 @@ def test_codex_exec_session_appears_on_api(tmp_path: Path) -> None:
             f"stderr={completed.stderr[-2000:]}"
         )
         trace = traces[0]
-        assert trace["source"] == "cli"
+        for _ in range(40):
+            runtime.pipeline.flush_once()
+            trace = httpx.get(f"http://127.0.0.1:{api_port}/v1/traces", timeout=2).json()[0]
+            if trace["lifecycle"] == "completed":
+                break
+            time.sleep(0.25)
+        assert trace["source"] == "codex-exec"
         assert trace["agent_framework"] == "codex"
+        assert trace["lifecycle"] == "completed", trace
         detail = httpx.get(f"http://127.0.0.1:{api_port}/v1/traces/{trace['trace_id']}", timeout=2)
         assert detail.status_code == 200
         body = detail.json()
         assert any(span["type"] == "agent" for span in body["spans"])
+        assert any(span["type"] == "tool" for span in body["spans"])
         collector_server.should_exit = True
         runtime.close()
         restarted = CollectorApp(settings)

@@ -42,3 +42,22 @@ export function spanTiming(span: Span): { label: string; explanation: string } {
   if (span.type === "agent" && !span.parent_span_id) return { label: `${formatMs(span.duration_ms)} elapsed`, explanation: "Parent session elapsed window reconstructed from lifecycle observations, including idle time; not precise active execution duration." };
   return { label: formatMs(span.duration_ms), explanation: provenance ? `Timing source: ${String(provenance)}.` : a["nm5.span_source"] === "hooks" ? "Reported hook duration. The stored record does not verify a separate start/end observation pair." : "Recorded span duration. Additional timing provenance, when recorded, is available in Attributes." };
 }
+
+const SOURCE_LABELS: Record<string, string> = {
+  "codex-cli": "Codex CLI",
+  "codex-exec": "Codex exec",
+  "codex-ide": "Codex IDE",
+  codex: "Codex",
+  cli: "Codex CLI",
+  cursor: "Cursor",
+  vscode: "VS Code Copilot",
+  "vscode-copilot": "VS Code Copilot",
+  otel: "OpenTelemetry",
+};
+
+/** Human label for a run's reported source; unknown values are shown verbatim. */
+export function sourceLabel(source: string | null | undefined, agentFramework?: string | null): string {
+  const value = source ?? agentFramework ?? null;
+  if (!value) return "Source not reported";
+  return SOURCE_LABELS[value] ?? value;
+}

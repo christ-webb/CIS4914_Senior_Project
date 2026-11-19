@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from no_more_500s_api.domain.models import (
+    HOOK_SOURCES,
     ExecutionState,
     RunEventIn,
     RunEventType,
@@ -19,6 +20,7 @@ from no_more_500s_api.domain.models import (
     SpanType,
     StoredRunEvent,
     Trace,
+    is_codex_attributes,
 )
 from no_more_500s_api.pricing.estimate import annotate_span_estimate, estimate_trace_usage
 from no_more_500s_api.services.turns import COMPLETED, FAILED, TurnLedger
@@ -491,12 +493,7 @@ def reconstruct_trace(
         execution_signals,
         cursor=cursor,
     )
-    hook_source = cursor or attributes.get("nm5.source") in {
-        "cli",
-        "codex",
-        "vscode",
-        "vscode-copilot",
-    }
+    hook_source = _is_hook_source(attributes)
     if not cursor and stored_lifecycle not in TERMINAL_LIFECYCLES:
         execution_state = (
             ExecutionState.EXECUTING if open_work or generic_heartbeat else ExecutionState.UNKNOWN
@@ -562,12 +559,11 @@ def _is_cursor_source(attributes: dict[str, Any]) -> bool:
 
 
 def _is_hook_source(attributes: dict[str, Any]) -> bool:
-    return _is_cursor_source(attributes) or attributes.get("nm5.source") in {
-        "cli",
-        "codex",
-        "vscode",
-        "vscode-copilot",
-    }
+    return (
+        _is_cursor_source(attributes)
+        or attributes.get("nm5.source") in HOOK_SOURCES
+        or is_codex_attributes(attributes)
+    )
 
 
 def _turn_source(attributes: dict[str, Any]) -> str:

@@ -73,7 +73,7 @@ def has_llm_spans(trace: Trace) -> bool:
 def is_codex_style(trace: Trace) -> bool:
     source = attr_str(trace.attributes, "nm5.source")
     framework = attr_str(trace.attributes, "agent.framework", "nm5.agent")
-    return source == "cli" or framework == "codex"
+    return source in {"cli", "codex-cli", "codex-exec", "codex-ide"} or framework == "codex"
 
 
 def is_hooks_without_llm(trace: Trace) -> bool:
@@ -81,7 +81,7 @@ def is_hooks_without_llm(trace: Trace) -> bool:
     instrumentation = attr_str(trace.attributes, "nm5.instrumentation") or ""
     if has_llm_spans(trace):
         return False
-    if source in {"cli", "cursor", "vscode"}:
+    if source in {"cli", "cursor", "vscode", "codex", "codex-cli", "codex-exec", "codex-ide"}:
         return "otel" not in instrumentation
     return False
 

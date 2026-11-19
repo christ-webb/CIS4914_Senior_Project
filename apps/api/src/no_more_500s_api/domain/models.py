@@ -128,6 +128,26 @@ def _sum_with_status(spans: list[Span], status_key: str, numeric: Callable[[Span
     return sum(numeric(span) for span in spans if span.attributes.get(status_key) == "reported")
 
 
+CODEX_SURFACE_SOURCES = frozenset({"codex-cli", "codex-exec", "codex-ide"})
+# Hook-driven sources (no SDK-managed lifecycle). "cli" is the legacy Codex label.
+HOOK_SOURCES = frozenset({"cli", "codex", "vscode", "vscode-copilot"}) | CODEX_SURFACE_SOURCES
+
+
+def is_codex_attributes(attributes: dict[str, Any]) -> bool:
+    agent = attributes.get("nm5.agent") or attributes.get("agent.framework")
+    return agent == "codex" or attributes.get("nm5.source") in CODEX_SURFACE_SOURCES
+
+
+def display_source(attributes: dict[str, Any]) -> str | None:
+    """`nm5.source`, refined by a later-observed Codex surface when the start lacked one."""
+    source = _attr_str(attributes, "nm5.source")
+    if is_codex_attributes(attributes) and source in {None, "codex"}:
+        late = _attr_str(attributes, "nm5.codex.last_surface")
+        if late in CODEX_SURFACE_SOURCES:
+            return late
+    return source
+
+
 def _attr_str(attributes: dict[str, Any], *keys: str) -> str | None:
     for key in keys:
         value = attributes.get(key)
@@ -225,7 +245,7 @@ class TraceSummary(BaseModel):
             is_fixture=attributes.get("nm5.is_fixture") is True,
             last_turn_completed=attributes.get("nm5.last_turn_completed") is True,
             failure_count=sum(span.status is SpanStatus.ERROR for span in trace.spans),
-            source=_attr_str(attributes, "nm5.source"),
+            source=display_source(attributes),
             agent_framework=_attr_str(attributes, "agent.framework", "nm5.agent"),
             provider=_attr_str(attributes, "gen_ai.provider"),
             workspace=_attr_str(attributes, "nm5.workspace"),

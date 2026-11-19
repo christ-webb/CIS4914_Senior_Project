@@ -13,6 +13,8 @@ dependencies = [
 [project.scripts]
 nm5-collector = "nomore500s_collector.cli:collector_main"
 nm5-codex-hook = "nomore500s_collector.cli:hook_main"
+nm5-codex-exec = "nomore500s_collector.cli:codex_exec_main"
+nm5-codex-doctor = "nomore500s_collector.cli:codex_doctor_main"
 nm5-codex-install-hooks = "nomore500s_collector.cli:install_main"
 nm5-codex-uninstall-hooks = "nomore500s_collector.cli:uninstall_main"
 nm5-cursor-hook = "nomore500s_collector.cli:cursor_hook_main"

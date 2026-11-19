@@ -89,11 +89,17 @@ def _load(path: Path) -> dict[str, Any]:
     return raw
 
 
-def wrapper_script(python_executable: Path | None = None, *, debug: bool = False) -> str:
+def wrapper_script(
+    python_executable: Path | None = None,
+    *,
+    debug: bool = False,
+    name: str = WRAPPER_NAME,
+    entrypoint: str = "cursor_hook_main",
+) -> str:
     python = shlex.quote(str(python_executable or resolved_python()))
     debug_default = "1" if debug else ""
     return f"""#!/bin/sh
-# nm5-cursor-hook observe-only wrapper. Always prints {{}} and exits 0.
+# {name} observe-only wrapper. Always prints {{}} and exits 0.
 NM5_HOOK_DEBUG="${{NM5_HOOK_DEBUG:-{debug_default}}}"
 export NM5_HOOK_DEBUG
 NM5_COLLECTOR_HOME="${{NM5_COLLECTOR_HOME:-$HOME/.nomore500s/collector}}"
@@ -127,7 +133,7 @@ if ! "$PYTHON" -c 'import nomore500s_collector.cli' </dev/null >/dev/null 2>&1; 
 fi
 _log "interpreter_ok"
 exec "$PYTHON" -c \\
-  'from nomore500s_collector.cli import cursor_hook_main as main; raise SystemExit(main())'
+  'from nomore500s_collector.cli import {entrypoint} as main; raise SystemExit(main())'
 """
 
 
