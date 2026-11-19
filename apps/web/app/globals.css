@@ -159,8 +159,16 @@ select.search { color-scheme: dark; }
 .active-run-row:hover { background: rgba(255,255,255,.04); }
 
 .tabs { display: flex; gap: 4px; margin: 18px 0 14px; padding: 4px; width: fit-content; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.tabs.nested { margin: 0; }
 .tab { padding: 6px 16px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
 .tab.active { background: var(--panel-2); color: var(--ink); box-shadow: 0 1px 4px rgba(0, 0, 0, .4); }
+.graph-toolbar { display: grid; gap: 8px; margin: -4px 0 12px; }
+.graph-legend { font-size: .78rem; max-width: 72ch; }
+.group-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.group-toggle { padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font-size: .72rem; }
+.member-link { display: flex; gap: 8px; align-items: center; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.member-link:hover { color: var(--accent); }
+.span-node.group-node { min-height: 86px; }
 
 .view-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; }
 .view-main { min-width: 0; }

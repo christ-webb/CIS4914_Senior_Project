@@ -1,21 +1,12 @@
 "use client";
 
-import {
-  Background,
-  Controls,
-  Handle,
-  MarkerType,
-  MiniMap,
-  Position,
-  ReactFlow,
-  type Edge,
-  type Node,
-  type NodeProps,
-} from "@xyflow/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { findingsForSpan, spanHighlightClass } from "@/lib/diagnostics";
-import { computeTimeline, layoutSpans, mergeLayoutPositions, NODE_H, NODE_W } from "@/lib/layout";
+import { ExecutionGraphCanvas } from "@/components/traces/execution-graph-canvas";
+import { useVisibleGraph } from "@/hooks/use-visible-graph";
+import { findingsForSpan } from "@/lib/diagnostics";
+import { groupsToExpandForFinding, type GraphMode, type SpanGroup } from "@/lib/execution-graph";
+import { computeTimeline } from "@/lib/layout";
 import {
   formatBilledCostLabel,
   formatCostLabel,
@@ -33,63 +24,11 @@ import {
   type Trace,
 } from "@/lib/types";
 
-type SpanNodeData = { span: Span; maxDuration: number; highlight: string };
-type SpanNode = Node<SpanNodeData, "span">;
-
-function SpanNodeView({ data, selected }: NodeProps<SpanNode>) {
-  const { span, maxDuration, highlight } = data;
-  const classes = ["span-node", `type-${span.type}`, highlight, selected ? "is-selected" : ""];
-  return (
-    <div className={classes.join(" ")}>
-      <Handle type="target" position={Position.Left} />
-      <div className="span-node-top">
-        <span className="type-pill">{span.type}</span>
-        <span className="muted">{formatMs(span.duration_ms)}</span>
-      </div>
-      <div className="span-node-name" title={span.name}>{span.name}</div>
-      <div className="span-node-bar"><i style={{ width: `${Math.max(4, (span.duration_ms / maxDuration) * 100)}%` }} /></div>
-      <Handle type="source" position={Position.Right} />
-    </div>
-  );
-}
-
-const nodeTypes = { span: SpanNodeView };
-
-export function toGraph(
-  spans: Span[],
-  activeId: string | null,
-  previousPositions: Record<string, { x: number; y: number }> = {},
-  findings: DiagnosticFinding[] = [],
-  selectedFindingId: string | null = null,
-): { nodes: SpanNode[]; edges: Edge[] } {
-  const layout = mergeLayoutPositions(previousPositions, layoutSpans(spans));
-  const maxDuration = Math.max(1, ...spans.map((span) => span.duration_ms));
-  const byId = new Map(spans.map((span) => [span.span_id, span]));
-  const nodes: SpanNode[] = spans.map((span) => ({
-    id: span.span_id,
-    type: "span",
-    position: layout.positions[span.span_id],
-    width: NODE_W,
-    height: NODE_H,
-    selected: span.span_id === activeId,
-    data: {
-      span,
-      maxDuration,
-      highlight: spanHighlightClass(span.span_id, span.status, findings, selectedFindingId),
-    },
-  }));
-  const edges: Edge[] = layout.edges.map((edge) => {
-    const failed = byId.get(edge.target)?.status === "error";
-    return {
-      ...edge,
-      type: "smoothstep",
-      animated: !failed,
-      markerEnd: { type: MarkerType.ArrowClosed, color: failed ? "#f87171" : "#64748b" },
-      style: { stroke: failed ? "#f87171" : "#64748b", strokeWidth: 1.6 },
-    };
-  });
-  return { nodes, edges };
-}
+const GRAPH_MODES: { id: GraphMode; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "full", label: "Full trace" },
+  { id: "failure", label: "Failure focus" },
+];
 
 type Tab = "graph" | "timeline" | "spans";
 const TAB_LABELS: Record<Tab, string> = { graph: "Execution graph", timeline: "Timeline", spans: "Spans" };
@@ -108,20 +47,36 @@ export function TraceView({
   onSelectSpan?: (spanId: string | null) => void;
 }) {
   const [tab, setTab] = useState<Tab>("graph");
+  const [mode, setMode] = useState<GraphMode>("overview");
   const [internalActiveId, setInternalActiveId] = useState<string | null>(null);
   const activeId = controlledActiveId ?? internalActiveId;
   const setActiveId = onSelectSpan ?? setInternalActiveId;
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
-  const graph = useMemo(
-    () => toGraph(trace.spans, activeId, positions, findings, selectedFindingId),
-    [trace.spans, activeId, positions, findings, selectedFindingId],
-  );
-  const nextPositions = Object.fromEntries(graph.nodes.map((node) => [node.id, node.position]));
-  if (JSON.stringify(nextPositions) !== JSON.stringify(positions)) {
-    setPositions(nextPositions);
-  }
+  const [fitNonce, setFitNonce] = useState(0);
+  const [fitNodeIds, setFitNodeIds] = useState<string[] | null>(null);
+  const appliedFindingRef = useRef<string | null>(null);
+  const { graph, expanded, toggleGroup, expandGroups } = useVisibleGraph({
+    spans: trace.spans,
+    mode,
+    findings,
+    selectedFindingId,
+    activeId,
+    onSelect: setActiveId,
+  });
+
+  useEffect(() => {
+    if (!selectedFindingId || appliedFindingRef.current === selectedFindingId) return;
+    appliedFindingRef.current = selectedFindingId;
+    const finding = findings.find((item) => item.finding_id === selectedFindingId) ?? null;
+    const groupIds = groupsToExpandForFinding(graph.groups, finding);
+    setMode("failure");
+    expandGroups(groupIds);
+    setFitNodeIds([...(finding?.span_ids ?? []), ...groupIds]);
+    setFitNonce((value) => value + 1);
+  }, [expandGroups, findings, graph.groups, selectedFindingId]);
+
   const timeline = useMemo(() => computeTimeline(trace.spans), [trace.spans]);
-  const active = trace.spans.find((span) => span.span_id === activeId) ?? null;
+  const activeSpan = trace.spans.find((span) => span.span_id === activeId) ?? null;
+  const activeGroup = graph.groups.find((group) => group.id === activeId) ?? null;
   const errors = trace.spans.filter((span) => span.status === "error").length;
   const lifecycle = traceLifecycle(trace);
   const execution = executionState(trace);
@@ -297,28 +252,50 @@ export function TraceView({
           </button>
         ))}
       </div>
+      {tab === "graph" && (
+        <div className="graph-toolbar">
+          <div className="tabs nested" role="tablist" aria-label="Graph view mode">
+            {GRAPH_MODES.map((item) => (
+              <button
+                key={item.id}
+                role="tab"
+                data-testid={`graph-mode-${item.id}`}
+                aria-selected={mode === item.id}
+                className={mode === item.id ? "tab active" : "tab"}
+                onClick={() => {
+                  if (item.id === mode) return;
+                  setMode(item.id);
+                  setFitNodeIds(null);
+                  setFitNonce((value) => value + 1);
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <p className="graph-legend muted">
+            Solid arrows are verified parent-child links. Dashed arrows are observed chronological order, not causality.
+            Groups sum member durations and do not represent wall-clock elapsed time.
+          </p>
+        </div>
+      )}
 
       <div className="view-body">
         <div className="view-main">
           {tab === "graph" ? (
-            <div className="graph" aria-label={`Execution graph for ${trace.name}`}>
-              <ReactFlow
-                nodes={graph.nodes}
-                edges={graph.edges}
-                nodeTypes={nodeTypes}
-                fitView
-                fitViewOptions={{ padding: 0.2 }}
-                minZoom={0.4}
-                nodesDraggable={false}
-                colorMode="dark"
-                onNodeClick={(_, node) => setActiveId(node.id)}
-                onPaneClick={() => setActiveId(null)}
-              >
-                <Background gap={22} />
-                <Controls showInteractive={false} />
-                <MiniMap pannable zoomable maskColor="rgba(8,10,18,.7)" />
-              </ReactFlow>
-            </div>
+            <ExecutionGraphCanvas
+              graph={graph}
+              activeId={activeId}
+              findings={findings}
+              selectedFindingId={selectedFindingId}
+              expandedGroupIds={expanded}
+              onSelect={setActiveId}
+              onToggleGroup={toggleGroup}
+              fitNonce={fitNonce}
+              fitNodeIds={fitNodeIds}
+              ariaLabel={`Execution graph for ${trace.name}`}
+              mode={mode}
+            />
           ) : tab === "spans" ? (
             <div className="table-scroll">
               <table className="table">
@@ -361,14 +338,99 @@ export function TraceView({
           )}
         </div>
         <aside className="span-detail" aria-label="Span details">
-          {active ? (
-            <SpanDetail span={active} findings={findingsForSpan(findings, active.span_id)} />
+          {activeSpan ? (
+            <SpanDetail span={activeSpan} findings={findingsForSpan(findings, activeSpan.span_id)} />
+          ) : activeGroup ? (
+            <GroupDetail
+              group={activeGroup}
+              spans={trace.spans}
+              findings={findings}
+              onSelectSpan={setActiveId}
+            />
           ) : (
-            <p className="muted">Select a span to inspect its input, output and attributes.</p>
+            <p className="muted">Select a span or group to inspect its input, output and attributes.</p>
           )}
         </aside>
       </div>
     </div>
+  );
+}
+
+function GroupDetail({
+  group,
+  spans,
+  findings,
+  onSelectSpan,
+}: {
+  group: SpanGroup;
+  spans: Span[];
+  findings: DiagnosticFinding[];
+  onSelectSpan: (spanId: string | null) => void;
+}) {
+  const byId = new Map(spans.map((span) => [span.span_id, span]));
+  const members = group.memberIds.map((id) => byId.get(id)).filter((span): span is Span => Boolean(span));
+  const ordered = [...members].sort((a, b) => {
+    const aFail = a.status === "error" ? 0 : 1;
+    const bFail = b.status === "error" ? 0 : 1;
+    if (aFail !== bFail) return aFail - bFail;
+    return a.span_id.localeCompare(b.span_id);
+  });
+  return (
+    <>
+      <p className="eyebrow">GROUP</p>
+      <h3>{group.name}</h3>
+      <p>
+        <span className="pill">{group.memberIds.length} calls</span>{" "}
+        {group.failedCount > 0 && <span className="pill error">{group.failedCount} failed</span>}{" "}
+        {group.findingCount > 0 && (
+          <span className={`pill ${group.worstFindingSeverity ?? "info"}`}>{group.findingCount} findings</span>
+        )}
+      </p>
+      <p className="muted">
+        Observed duration {formatMs(group.durationMs)} is the sum of member spans, not wall-clock elapsed time.
+      </p>
+      <h4>Members</h4>
+      <ul className="finding-list compact">
+        {ordered.map((span) => (
+          <li key={span.span_id}>
+            <button type="button" className="member-link" onClick={() => onSelectSpan(span.span_id)}>
+              <span className={`pill ${span.status}`}>{span.status}</span> {span.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {group.failedCount > 0 && (
+        <>
+          <h4>Failed members</h4>
+          <ul className="finding-list compact">
+            {ordered
+              .filter((span) => span.status === "error")
+              .map((span) => (
+                <li key={`fail-${span.span_id}`}>
+                  <button type="button" className="member-link" data-testid={`failed-member-${span.span_id}`} onClick={() => onSelectSpan(span.span_id)}>
+                    {span.name} · {span.span_id.slice(0, 8)}
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </>
+      )}
+      <p className="muted">Diagnostic severity and evidence stay on the original spans.</p>
+      {members.flatMap((span) => findingsForSpan(findings, span.span_id)).length > 0 && (
+        <>
+          <h4>Findings on members</h4>
+          <ul className="finding-list compact">
+            {members.flatMap((span) =>
+              findingsForSpan(findings, span.span_id).map((finding) => (
+                <li key={`${span.span_id}-${finding.finding_id}`}>
+                  <span className={`pill ${finding.severity}`}>{finding.severity}</span> {finding.title}
+                </li>
+              )),
+            )}
+          </ul>
+        </>
+      )}
+    </>
   );
 }
 

@@ -171,7 +171,18 @@ function FindingDetail({ finding }: { finding: DiagnosticFinding }) {
         ))}
       </ul>
       <h4>Related spans</h4>
-      <p className="muted">{finding.span_ids.length ? finding.span_ids.join(", ") : "Run-level finding"}</p>
+      <p className="muted">
+        {finding.span_ids.length
+          ? `${finding.span_ids.length} supporting span${finding.span_ids.length === 1 ? "" : "s"} highlighted on the graph.`
+          : "Run-level finding"}
+      </p>
+      {finding.span_ids.length > 0 && (
+        <ul className="finding-list compact">
+          {finding.span_ids.map((spanId) => (
+            <li key={spanId}><code>{spanId}</code></li>
+          ))}
+        </ul>
+      )}
       <h4>Suggested investigation</h4>
       <p>{finding.suggested_action}</p>
     </div>

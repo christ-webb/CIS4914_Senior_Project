@@ -34,6 +34,13 @@ test("layoutSpans survives cycles", () => {
   assert.equal(Object.keys(layoutSpans(spans).positions).length, 2);
 });
 
+test("layoutSpans does not invent parent edges from array order", () => {
+  const spans = [span("a", null, 0, 1), span("b", null, 1, 1), span("c", null, 2, 1)];
+  const { edges } = layoutSpans(spans);
+  assert.equal(edges.length, 0);
+  assert.equal(Object.keys(layoutSpans(spans).positions).length, 3);
+});
+
 test("computeTimeline offsets spans from the earliest start", () => {
   const { rows, totalMs } = computeTimeline([span("a", null, 1000, 50), span("b", null, 1100, 100)]);
   assert.equal(totalMs, 200);

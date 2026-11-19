@@ -10,18 +10,15 @@ export interface SpanLayout {
   edges: { id: string; source: string; target: string }[];
 }
 
-export function layoutSpans(spans: Span[]): SpanLayout {
-  const ids = new Set(spans.map((span) => span.span_id));
-  const parentOf = new Map<string, string>();
-  spans.forEach((span, index) => {
-    const parent = span.parent_span_id ?? (index > 0 ? spans[index - 1].span_id : null);
-    if (parent && parent !== span.span_id && ids.has(parent)) parentOf.set(span.span_id, parent);
-  });
-
+export function layoutGraph(ids: string[], parentOf: Map<string, string>): SpanLayout {
+  const idSet = new Set(ids);
   const children = new Map<string, string[]>();
-  for (const span of spans) {
-    const parent = parentOf.get(span.span_id);
-    if (parent) children.set(parent, [...(children.get(parent) ?? []), span.span_id]);
+  const edges: SpanLayout["edges"] = [];
+  for (const id of ids) {
+    const parent = parentOf.get(id);
+    if (!parent || !idSet.has(parent) || parent === id) continue;
+    children.set(parent, [...(children.get(parent) ?? []), id]);
+    edges.push({ id: `${parent}-${id}`, source: parent, target: id });
   }
 
   const positions: SpanLayout["positions"] = {};
@@ -42,15 +39,23 @@ export function layoutSpans(spans: Span[]): SpanLayout {
     return row;
   };
 
-  for (const span of spans) if (!parentOf.has(span.span_id)) place(span.span_id, 0);
-  for (const span of spans) if (!visited.has(span.span_id)) place(span.span_id, 0);
+  for (const id of ids) if (!parentOf.has(id) || !idSet.has(parentOf.get(id) ?? "")) place(id, 0);
+  for (const id of ids) if (!visited.has(id)) place(id, 0);
 
-  const edges = [...parentOf].map(([target, source]) => ({
-    id: `${source}-${target}`,
-    source,
-    target,
-  }));
   return { positions, edges };
+}
+
+export function layoutSpans(spans: Span[]): SpanLayout {
+  const ids = new Set(spans.map((span) => span.span_id));
+  const parentOf = new Map<string, string>();
+  for (const span of spans) {
+    const parent = span.parent_span_id;
+    if (parent && parent !== span.span_id && ids.has(parent)) parentOf.set(span.span_id, parent);
+  }
+  return layoutGraph(
+    spans.map((span) => span.span_id),
+    parentOf,
+  );
 }
 
 export function mergeLayoutPositions(
@@ -74,16 +79,26 @@ export interface TimelineRow {
 export function computeTimeline(spans: Span[]): { rows: TimelineRow[]; totalMs: number } {
   if (spans.length === 0) return { rows: [], totalMs: 0 };
   const starts = spans.map((span) => Date.parse(span.started_at));
-  const origin = Math.min(...starts);
-  const totalMs = Math.max(1, ...spans.map((span, i) => starts[i] - origin + span.duration_ms));
+  const finite = starts.filter((value) => Number.isFinite(value));
+  const origin = finite.length ? Math.min(...finite) : 0;
+  const totalMs = Math.max(
+    1,
+    ...spans.map((span, i) => {
+      const start = Number.isFinite(starts[i]) ? starts[i] : origin;
+      return start - origin + (span.duration_ms || 0);
+    }),
+  );
   const rows = spans
-    .map((span, i) => ({ span, offsetMs: starts[i] - origin }))
-    .sort((a, b) => a.offsetMs - b.offsetMs)
+    .map((span, i) => ({
+      span,
+      offsetMs: (Number.isFinite(starts[i]) ? starts[i] : origin) - origin,
+    }))
+    .sort((a, b) => a.offsetMs - b.offsetMs || a.span.span_id.localeCompare(b.span.span_id))
     .map(({ span, offsetMs }) => ({
       span,
       offsetMs,
       offsetPct: (offsetMs / totalMs) * 100,
-      widthPct: Math.max(0.6, (span.duration_ms / totalMs) * 100),
+      widthPct: Math.max(0.6, ((span.duration_ms || 0) / totalMs) * 100),
     }));
   return { rows, totalMs };
 }

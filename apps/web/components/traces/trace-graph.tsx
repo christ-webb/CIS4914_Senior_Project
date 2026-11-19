@@ -1,31 +1,15 @@
 ﻿"use client";
 
-import { Background, Controls, Edge, Node, ReactFlow } from "@xyflow/react";
-import { useMemo } from "react";
-
+import { ExecutionGraphCanvas } from "@/components/traces/execution-graph-canvas";
+import { useVisibleGraph } from "@/hooks/use-visible-graph";
 import { formatBilledCostLabel, formatEstimatedCostLabel, formatTokenLabel } from "@/lib/stats";
-import type { Span, Trace } from "@/lib/types";
-
-export function toGraph(spans: Span[]): { nodes: Node[]; edges: Edge[] } {
-  const nodes = spans.map((span, index) => ({
-    id: span.span_id,
-    position: { x: 80 + (index % 2) * 280, y: 70 + index * 120 },
-    data: { label: `${span.type.toUpperCase()} · ${span.name}` },
-    className: span.status === "error" ? "error-node" : "trace-node",
-  }));
-  const byId = new Set(spans.map((span) => span.span_id));
-  const edges = spans.flatMap((span, index) => {
-    const fallbackParent = index > 0 ? spans[index - 1]?.span_id : undefined;
-    const parent = span.parent_span_id ?? fallbackParent;
-    return parent && byId.has(parent)
-      ? [{ id: `${parent}-${span.span_id}`, source: parent, target: span.span_id }]
-      : [];
-  });
-  return { nodes, edges };
-}
+import type { Trace } from "@/lib/types";
 
 export function TraceGraph({ trace }: { trace: Trace }) {
-  const graph = useMemo(() => toGraph(trace.spans), [trace.spans]);
+  const { graph, expanded, toggleGroup } = useVisibleGraph({
+    spans: trace.spans,
+    mode: "overview",
+  });
 
   return (
     <div className="graph-wrap">
@@ -41,13 +25,19 @@ export function TraceGraph({ trace }: { trace: Trace }) {
           <div><dt>Billed</dt><dd className="billed-cost">{formatBilledCostLabel(trace.total_cost_usd, trace.cost_status)}</dd></div>
         </dl>
       </div>
-      <div className="graph" aria-label={`Execution graph for ${trace.name}`}>
-        <ReactFlow nodes={graph.nodes} edges={graph.edges} fitView>
-          <Background />
-          <Controls />
-        </ReactFlow>
-      </div>
+      <p className="graph-legend muted">
+        Solid arrows are verified parent-child links. Dashed arrows are observed chronological order, not causality.
+      </p>
+      <ExecutionGraphCanvas
+        graph={graph}
+        activeId={null}
+        expandedGroupIds={expanded}
+        onSelect={() => undefined}
+        onToggleGroup={toggleGroup}
+        fitNonce={0}
+        ariaLabel={`Execution graph for ${trace.name}`}
+        mode="overview"
+      />
     </div>
   );
 }
-
