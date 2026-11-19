@@ -12,6 +12,7 @@ A trace represents one top-level agent or workflow run.
 | `started_at` | UTC start timestamp |
 | `status` | `unset`, `ok`, or `error` (outcome; not a live-run lifecycle) |
 | `lifecycle` | `running`, `completed`, `failed`, `cancelled`, `interrupted`, or `unknown` |
+| `execution_state` | `executing`, `idle`, or `unknown` (turn activity, not session outcome) |
 | `last_activity_at` | Last observed telemetry receipt |
 | `ended_at` | Set when a run is finalized |
 | `attributes` | Extensible application metadata |
@@ -20,7 +21,10 @@ A trace represents one top-level agent or workflow run.
 The API derives duration, total tokens, and total cost from reconstructed spans.
 Batch traces with `status=unset` have `lifecycle=unknown` (outcome not
 confirmed). Live inactivity beyond `NM5_RUN_INACTIVITY_SECONDS` (default 120)
-is shown as `interrupted`, which is not a failure. User abort or editor close
+is shown as `interrupted` for in-progress executions, which is not a failure.
+Cursor hook sessions that completed a turn (`stop` / `afterAgentResponse`) stay
+`running` with `execution_state=idle` while the conversation remains open.
+Codex and VS Code keep the previous inactivity rule. User abort or editor close
 is `cancelled` and must not be counted as a successful run. `nm5.outcome`
 records `success`, `failure`, `cancelled`, or `timeout`.
 

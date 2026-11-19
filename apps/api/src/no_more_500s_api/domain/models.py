@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -25,6 +26,12 @@ class RunLifecycle(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
+    UNKNOWN = "unknown"
+
+
+class ExecutionState(StrEnum):
+    EXECUTING = "executing"
+    IDLE = "idle"
     UNKNOWN = "unknown"
 
 
@@ -82,6 +89,7 @@ class Trace(TraceCreate):
     total_tokens: int = Field(default=0, ge=0)
     total_cost_usd: float = Field(default=0, ge=0)
     lifecycle: RunLifecycle = RunLifecycle.UNKNOWN
+    execution_state: ExecutionState = ExecutionState.UNKNOWN
     last_activity_at: datetime | None = None
     ended_at: datetime | None = None
 
@@ -95,12 +103,30 @@ class Trace(TraceCreate):
         return cls(
             **trace.model_dump(),
             duration_ms=duration,
-            total_tokens=sum(span.token_count for span in trace.spans),
-            total_cost_usd=sum(span.cost_usd for span in trace.spans),
+            total_tokens=int(
+                _sum_with_status(trace.spans, "nm5.token_status", lambda span: span.token_count)
+            ),
+            total_cost_usd=float(
+                _sum_with_status(trace.spans, "nm5.cost_status", lambda span: span.cost_usd)
+            ),
             lifecycle=lifecycle,
+            execution_state=ExecutionState.UNKNOWN,
             last_activity_at=trace.started_at,
             ended_at=ended_at,
         )
+
+
+def _sum_with_status(
+    spans: list[Span], status_key: str, numeric: Callable[[Span], float]
+) -> float:
+    statuses = [
+        span.attributes.get(status_key)
+        for span in spans
+        if isinstance(span.attributes.get(status_key), str) and span.attributes.get(status_key)
+    ]
+    if not statuses:
+        return sum(numeric(span) for span in spans)
+    return sum(numeric(span) for span in spans if span.attributes.get(status_key) == "reported")
 
 
 def _attr_str(attributes: dict[str, Any], *keys: str) -> str | None:
@@ -108,6 +134,29 @@ def _attr_str(attributes: dict[str, Any], *keys: str) -> str | None:
         value = attributes.get(key)
         if isinstance(value, str) and value:
             return value
+    return None
+
+
+def _attr_float(attributes: dict[str, Any], key: str) -> float | None:
+    value = attributes.get(key)
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _attr_int(attributes: dict[str, Any], key: str) -> int | None:
+    value = attributes.get(key)
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
     return None
 
 
@@ -121,6 +170,7 @@ class TraceSummary(BaseModel):
     total_cost_usd: float
     status: SpanStatus
     lifecycle: RunLifecycle = RunLifecycle.UNKNOWN
+    execution_state: ExecutionState = ExecutionState.UNKNOWN
     last_activity_at: datetime | None = None
     ended_at: datetime | None = None
     source: str | None = None
@@ -129,20 +179,44 @@ class TraceSummary(BaseModel):
     workspace: str | None = None
     cost_status: str | None = None
     token_status: str | None = None
+    usage_scope: str | None = None
     instrumentation_coverage: str | None = None
+    estimated_cost_usd: float | None = None
+    estimated_cost_status: str | None = None
+    estimated_subtotal_usd: float | None = None
+    model: str | None = None
+    model_variant: str | None = None
+    estimate_basis: str | None = None
+    scenario_standard_usd: float | None = None
+    scenario_fast_usd: float | None = None
+    covered_generations: int | None = None
+    total_generations: int | None = None
 
     @classmethod
     def from_trace(cls, trace: Trace) -> "TraceSummary":
         attributes = trace.attributes
+        dump = trace.model_dump(exclude={"spans", "attributes"})
+        dump.pop("estimated_cost_usd", None)
         return cls(
-            **trace.model_dump(exclude={"spans", "attributes"}),
+            **dump,
             source=_attr_str(attributes, "nm5.source"),
             agent_framework=_attr_str(attributes, "agent.framework", "nm5.agent"),
             provider=_attr_str(attributes, "gen_ai.provider"),
             workspace=_attr_str(attributes, "nm5.workspace"),
             cost_status=_attr_str(attributes, "nm5.cost_status"),
             token_status=_attr_str(attributes, "nm5.token_status"),
+            usage_scope=_attr_str(attributes, "nm5.usage_scope"),
             instrumentation_coverage=_attr_str(attributes, "nm5.coverage"),
+            estimated_cost_usd=_attr_float(attributes, "nm5.estimated_cost_usd"),
+            estimated_cost_status=_attr_str(attributes, "nm5.estimated_cost_status"),
+            estimated_subtotal_usd=_attr_float(attributes, "nm5.estimated_subtotal_usd"),
+            model=_attr_str(attributes, "nm5.model_id", "gen_ai.request.model"),
+            model_variant=_attr_str(attributes, "nm5.model_variant"),
+            estimate_basis=_attr_str(attributes, "nm5.estimate_basis"),
+            scenario_standard_usd=_attr_float(attributes, "nm5.scenario_standard_usd"),
+            scenario_fast_usd=_attr_float(attributes, "nm5.scenario_fast_usd"),
+            covered_generations=_attr_int(attributes, "nm5.estimate_covered_generations"),
+            total_generations=_attr_int(attributes, "nm5.estimate_total_generations"),
         )
 
 

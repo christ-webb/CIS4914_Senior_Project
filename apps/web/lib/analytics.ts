@@ -1,5 +1,5 @@
 import type { Span, SpanType, Trace } from "./types.ts";
-import { percentile } from "./stats.ts";
+import { isCompleteEstimate, isMeasuredCost, isMeasuredTokens, percentile, spanUsageStatus } from "./stats.ts";
 
 export interface ErrorEvent {
   traceId: string;
@@ -131,8 +131,12 @@ export function spanTypeStats(traces: Trace[]): TypeStat[] {
         errors: spans.filter((span) => span.status === "error").length,
         avgMs: durations.reduce((a, b) => a + b, 0) / spans.length,
         p95Ms: percentile(durations, 95),
-        tokens: spans.reduce((a, span) => a + span.token_count, 0),
-        cost: spans.reduce((a, span) => a + span.cost_usd, 0),
+        tokens: spans.reduce((a, span) => {
+          return spanUsageStatus(span, "token") === "unavailable" ? a : a + span.token_count;
+        }, 0),
+        cost: spans.reduce((a, span) => {
+          return spanUsageStatus(span, "cost") === "unavailable" ? a : a + span.cost_usd;
+        }, 0),
       };
     })
     .sort((a, b) => b.count - a.count);
@@ -151,16 +155,25 @@ export interface ProjectStat {
   errors: number;
   tokens: number;
   cost: number;
+  estimatedCost: number;
 }
 
 export function projectStats(traces: Trace[]): ProjectStat[] {
   const map = new Map<string, ProjectStat>();
   for (const trace of traces) {
-    const stat = map.get(trace.project_id) ?? { project: trace.project_id, runs: 0, errors: 0, tokens: 0, cost: 0 };
+    const stat = map.get(trace.project_id) ?? {
+      project: trace.project_id,
+      runs: 0,
+      errors: 0,
+      tokens: 0,
+      cost: 0,
+      estimatedCost: 0,
+    };
     stat.runs += 1;
     stat.errors += trace.status === "error" ? 1 : 0;
-    stat.tokens += trace.total_tokens;
-    stat.cost += trace.total_cost_usd;
+    if (isMeasuredTokens(trace)) stat.tokens += trace.total_tokens;
+    if (isMeasuredCost(trace)) stat.cost += trace.total_cost_usd;
+    if (isCompleteEstimate(trace)) stat.estimatedCost += trace.estimated_cost_usd ?? 0;
     map.set(trace.project_id, stat);
   }
   return [...map.values()].sort((a, b) => b.cost - a.cost);

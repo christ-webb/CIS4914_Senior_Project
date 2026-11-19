@@ -449,3 +449,48 @@ def test_clickhouse_retry_after_event_insert_fault_is_idempotent() -> None:
     names = {span.name for span in repaired.spans}
     assert names >= {"agent", "one", "two"}
 
+
+def test_live_usage_event_id_replay_does_not_inflate_tokens() -> None:
+    repo = repository()
+    started = repo.start_run(
+        RunStart(
+            project_id=f"usage-{uuid4()}",
+            name="geometry-replay",
+            agent_name="cursor",
+            attributes={"nm5.source": "cursor", "agent.framework": "cursor"},
+        )
+    )
+    span_id = uuid4()
+    event_id = uuid4()
+    usage = RunEventIn(
+        event_id=event_id,
+        event_type="span_complete",
+        sequence=1,
+        span_id=span_id,
+        type=SpanType.LLM,
+        name="grok-4.7",
+        status=SpanStatus.OK,
+        token_count=183649,
+        attributes={
+            "nm5.usage_event": "stop",
+            "nm5.token_status": "reported",
+            "nm5.generation_id": "g1",
+            "nm5.usage_scope": "parent_agent",
+            "nm5.token_accounting": "inclusive_cache",
+            "nm5.billable_breakdown": "complete",
+            "nm5.model_id": "grok-4.7",
+            "gen_ai.usage.input_tokens": 180819,
+            "gen_ai.usage.output_tokens": 2830,
+            "gen_ai.usage.cache_read_tokens": 137088,
+            "gen_ai.usage.cache_write_tokens": 0,
+        },
+    )
+    first = repo.append_events(started.trace_id, [usage])
+    second = repo.append_events(started.trace_id, [usage])
+    assert first.total_tokens == 183649
+    assert second.total_tokens == 183649
+    fetched = repo.get(started.trace_id)
+    assert fetched.total_tokens == 183649
+    assert fetched.attributes.get("nm5.estimated_cost_status") == "unavailable"
+    assert fetched.attributes.get("nm5.scenario_standard_usd") is not None
+

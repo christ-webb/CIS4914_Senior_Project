@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { layoutSpans, mergeLayoutPositions } from "../lib/layout.ts";
-import { isActiveLifecycle, traceLifecycle } from "../lib/types.ts";
+import { isExecutingRun, isIdleOpenRun, needsLivePolling, traceLifecycle } from "../lib/types.ts";
 
 const span = (id, parent = null) => ({
   span_id: id,
@@ -32,6 +32,28 @@ test("traceLifecycle treats missing field as unknown unless status is terminal",
   assert.equal(traceLifecycle({ status: "ok" }), "completed");
   assert.equal(traceLifecycle({ status: "error" }), "failed");
   assert.equal(traceLifecycle({ status: "unset", lifecycle: "running" }), "running");
-  assert.equal(isActiveLifecycle("interrupted"), true);
-  assert.equal(isActiveLifecycle("completed"), false);
+  assert.equal(isExecutingRun({ status: "unset", lifecycle: "interrupted", source: "cli" }), true);
+  assert.equal(isExecutingRun({ status: "unset", lifecycle: "interrupted", source: "cursor", execution_state: "executing" }), false);
+  assert.equal(isExecutingRun({ status: "unset", lifecycle: "running", source: "cursor", execution_state: "idle" }), false);
+  assert.equal(isExecutingRun({ status: "unset", lifecycle: "running", source: "cursor", execution_state: "executing" }), true);
+  assert.equal(
+    isExecutingRun({
+      status: "unset",
+      lifecycle: "running",
+      execution_state: "idle",
+      attributes: { "nm5.source": "cursor" },
+    }),
+    false,
+  );
+  assert.equal(isIdleOpenRun({ status: "unset", lifecycle: "running", source: "cursor", execution_state: "idle" }), true);
+  assert.equal(
+    isIdleOpenRun({
+      status: "unset",
+      lifecycle: "running",
+      execution_state: "idle",
+      attributes: { "agent.framework": "cursor" },
+    }),
+    true,
+  );
+  assert.equal(needsLivePolling({ status: "unset", lifecycle: "interrupted", source: "cursor", execution_state: "executing" }), false);
 });

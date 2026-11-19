@@ -360,6 +360,61 @@ def test_out_of_order_http_complete_before_start(client: TestClient) -> None:
     assert span["name"] == "late-start"
 
 
+def test_late_identity_verified_usage_after_finalize(client: TestClient) -> None:
+    created = _start(
+        client,
+        attributes={
+            "nm5.source": "cursor",
+            "agent.framework": "cursor",
+            "nm5.session_id": "conv-1",
+            "nm5.conversation_id": "conv-1",
+            "nm5.token_status": "unavailable",
+            "nm5.cost_status": "unavailable",
+        },
+    )
+    trace_id = created["trace_id"]
+    done = client.post(
+        f"/v1/runs/{trace_id}/finalize",
+        json={"status": "cancelled", "sequence": 1, "attributes": {"nm5.outcome": "cancelled"}},
+    )
+    assert done.status_code == 200
+    usage = {
+        "event_id": str(uuid4()),
+        "event_type": "span_complete",
+        "sequence": 2,
+        "span_id": str(uuid4()),
+        "type": "llm",
+        "name": "cursor-turn",
+        "status": "ok",
+        "token_count": 8,
+        "attributes": {
+            "nm5.usage_event": "stop",
+            "nm5.token_status": "reported",
+            "nm5.generation_id": "g1",
+            "nm5.conversation_id": "conv-1",
+            "nm5.usage_scope": "parent_agent",
+        },
+    }
+    first = client.post(f"/v1/runs/{trace_id}/events", json=[usage])
+    replay = client.post(f"/v1/runs/{trace_id}/events", json=[usage])
+    assert first.status_code == 200, first.text
+    assert replay.status_code == 200
+    body = replay.json()
+    assert body["lifecycle"] == "cancelled"
+    assert body["attributes"]["nm5.outcome"] == "cancelled"
+    assert body["total_tokens"] == 8
+    assert body["attributes"]["nm5.token_status"] == "reported"
+    rejected = client.post(
+        f"/v1/runs/{trace_id}/events",
+        json=[{
+            "event_type": "heartbeat",
+            "sequence": 3,
+            "progress": "stop",
+        }],
+    )
+    assert rejected.status_code == 409
+
+
 def test_unknown_run_events_are_404(client: TestClient) -> None:
     missing = uuid4()
     response = client.post(

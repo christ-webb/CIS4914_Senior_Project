@@ -5,9 +5,9 @@ hooks. You do not wrap the agent or change tool permissions.
 
 ## Supported versions
 
-Verified against Cursor's current hooks documentation. Desktop and CLI both
-load `hooks.json`. Cloud agents load **project** hooks only, not
-`~/.cursor/hooks.json`.
+Verified against Cursor **3.30.14** and Cursor's current hooks documentation.
+Desktop and CLI both load `hooks.json`. Cloud agents load **project** hooks
+only, not `~/.cursor/hooks.json`.
 
 User-level hooks run with working directory `~/.cursor/`. Project-level hooks
 run from the project root. The installer writes a CWD-safe wrapper so Cursor's
@@ -59,7 +59,10 @@ registered, so Cursor keeps its own allow/deny flow. Tool spans come from
 | `postToolUse` | Tool span completion |
 | `postToolUseFailure` | Tool error; user interrupt is not a model failure |
 | `subagentStop` | Nested agent span completion |
-| `stop` | Turn heartbeat (not session end) |
+| `stop` | Turn heartbeat (not session end); optional parent-agent token fields |
+| `afterAgentResponse` | Turn completion heartbeat; optional parent-agent token fields |
+| `afterAgentThought` | Executing heartbeat for the current generation; response text is redacted |
+| `preCompact` | Context-window occupancy, never billable token usage |
 | `sessionEnd` | Finalize |
 
 ## Session outcomes
@@ -74,9 +77,27 @@ Cancelled runs keep trace `status=unset` so they do not count as successful.
 
 ## Coverage
 
-Hooks report lifecycle and tools. Model **identifiers** may appear on payloads.
-Token usage and cost are `unavailable` unless later telemetry reports them.
-Do not treat missing usage as zero.
+Hooks report lifecycle and tools. The public Cursor schema for `stop` is
+`status` plus `loop_count`; `afterAgentResponse` documents `text`. Every agent
+hook also receives the common fields `conversation_id`, `generation_id`,
+`model`, `model_id`, and `cursor_version`. Token counts are **not** in the
+published `stop` / `afterAgentResponse` schema. If a build still sends
+`input_tokens`, `output_tokens`, `cache_read_tokens`, or `cache_write_tokens`,
+those are parent-agent turn measurements, not context-window occupancy and not
+subagent usage. If they are absent, tokens stay **Not reported**. Cost is not
+present on official IDE hooks for individual Cursor Pro accounts and stays
+**Not reported**. Do not treat missing usage as zero.
+
+`preCompact` occupancy (`context_tokens` / `context_window_size`) is stored as
+`nm5.context_*` and shown as a separate Context metric.
+
+An idle open Composer conversation remains `running` with execution state
+`idle`. It is listed under **Idle / Open**, not Active Runs. Active Runs is
+executing turns only. Inactivity becomes `interrupted` only while a turn is
+still `executing`. `stop` never finalizes the session.
+
+Team Admin API billed-cost enrichment is not implemented for individual Pro
+accounts. Dashboard CSV exports cannot be joined without a conversation id.
 
 ## Diagnostics
 
@@ -99,13 +120,22 @@ your local collector. Those environments are **unsupported** in this milestone.
 
 ## Verify
 
-1. Start ClickHouse, the API, the collector, and the dashboard.
-2. Run `uv run nm5-cursor-install-hooks` so the user-level wrapper is current.
+1. Start ClickHouse, the API, the collector, and the dashboard. Restart the
+   collector after adapter changes; it does not auto-reload.
+2. Run `uv run nm5-cursor-install-hooks` so `afterAgentResponse` and
+   `afterAgentThought` are registered.
 3. Start a disposable Cursor Agent session (Composer) in another project and
    run a harmless file-edit or terminal task.
-4. Confirm collector logs show `POST /v1/collector/events`.
-5. Confirm an Active Runs row with source `cursor`, then history after restart.
+4. Confirm collector logs show `POST /v1/collector/events` and
+   `cursor hook event=... fields=...` for `stop` / `afterAgentResponse` /
+   `preCompact`. `fields=` lists present allowlisted keys only, never values.
+5. While the agent is working, the run is in **Active runs**. After the turn
+   finishes, it moves to **Idle / Open** with lifecycle `running` and
+   execution `idle`, not interrupted + live.
+6. Tokens stay **Not reported** unless those logs include `input_tokens` or
+   `output_tokens`. Cost stays **Not reported**.
+7. Closing the Composer tab should emit `sessionEnd` and finalize the run.
 
-If you cannot drive a live Cursor session, fixture tests still cover mapping
-and wrapper execution; live GUI verification remains pending until a real hook
-event is observed.
+Fixture tests cover mapping, usage precedence, and wrapper execution. Remaining
+manual GUI checks: a new Composer 2.5 chat after collector restart, tab close
+→ `sessionEnd`, and whether this Cursor build actually emits token fields.

@@ -15,6 +15,7 @@ SENSITIVE_KEYS = {
     "initialPrompt",
     "initial_prompt",
     "last_assistant_message",
+    "text",
     "transcript_path",
     "agent_transcript_path",
     "llm_request",

@@ -15,6 +15,8 @@ _EVENT_ALIASES = {
     "userpromptsubmitted": "userPromptSubmitted",
     "userpromptsubmit": "userPromptSubmitted",
     "precompact": "preCompact",
+    "afteragentresponse": "afterAgentResponse",
+    "afteragentthought": "afterAgentThought",
     "permissionrequest": "permissionRequest",
     "interrupt": "Interrupt",
     "premodelrequest": "PreModelRequest",
@@ -52,6 +54,9 @@ def normalize_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if tool_id:
         cleaned["tool_use_id"] = str(tool_id)
+    generation = cleaned.get("generation_id") or cleaned.get("generationId")
+    if generation:
+        cleaned["generation_id"] = str(generation)
     if "toolArgs" in cleaned and "tool_input" not in cleaned:
         cleaned["tool_input"] = cleaned.get("toolArgs")
     if "cwd" not in cleaned and cleaned.get("CWD"):

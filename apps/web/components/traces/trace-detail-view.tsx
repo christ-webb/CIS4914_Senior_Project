@@ -9,7 +9,7 @@ import { LiveStatus, PageHeader } from "@/components/shell/page-header";
 import { usePolling } from "@/hooks/use-polling";
 import { getTrace, getTraceDiagnostics } from "@/lib/api";
 import { sortFindings } from "@/lib/diagnostics";
-import { isActiveLifecycle, traceLifecycle, type DiagnosticFinding, type Trace, type TraceDiagnostics } from "@/lib/types";
+import { needsLivePolling, type DiagnosticFinding, type Trace, type TraceDiagnostics } from "@/lib/types";
 
 export function TraceDetailView({ traceId }: { traceId: string }) {
   const params = useSearchParams();
@@ -22,7 +22,7 @@ export function TraceDetailView({ traceId }: { traceId: string }) {
   const { data, online, loading, updatedAt, refresh } = usePolling(load, intervalMs);
   const trace = data?.trace ?? null;
   const diagnostics = data?.diagnostics ?? null;
-  const nextInterval = trace && !isActiveLifecycle(traceLifecycle(trace)) ? 0 : 2000;
+  const nextInterval = trace && !needsLivePolling(trace) ? 0 : 2000;
   if (nextInterval !== intervalMs) setIntervalMs(nextInterval);
 
   const findings = useMemo(() => sortFindings(diagnostics?.findings ?? []), [diagnostics]);

@@ -17,10 +17,12 @@ Base path: `/v1`
 | `GET` | `/v1/diagnostics` | Bounded recent-run diagnostic summary (not all history) |
 
 `GET /v1/traces` summaries include optional `source`, `agent_framework`,
-`provider`, `workspace`, `cost_status`, `token_status`, and
-`instrumentation_coverage` copied from run attributes. Missing fields mean the
-run was not marked as an external CLI session. `cost_status=unavailable` is not
-the same as a reported zero cost.
+`provider`, `workspace`, `cost_status`, `token_status`, `usage_scope`,
+`execution_state`, and `instrumentation_coverage` copied from run attributes.
+Missing fields mean the run was not marked as an external CLI session.
+`cost_status=unavailable` is not the same as a reported zero cost. Cursor hook
+usage, when present, is `usage_scope=parent_agent` unless subagent token
+telemetry exists.
 
 `POST /v1/traces` remains first-write-wins and unchanged. Live runs use the
 append-only event log described in ADR 0004. Each live event carries a stable

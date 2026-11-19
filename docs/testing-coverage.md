@@ -40,7 +40,11 @@ tests, without changing application behavior or another contributor's components
   hook install merge, collector auth, and SQLite replay after restart. Live
   Codex (`test_live_codex.py`) is skipped unless `NM5_TEST_CODEX=1`. Live
   editor checks require `NM5_TEST_CURSOR=1` / `NM5_TEST_VSCODE=1` and are
-  otherwise documented as pending.
+  otherwise documented as pending. Cursor lifecycle/usage mapping, Idle/Open
+  vs Active Runs, and usage precedence are covered by collector, API, and web
+  unit tests. Remaining manual GUI checks are a live Composer 2.5 chat after
+  collector restart, Composer tab close → `sessionEnd`, and whether the
+  installed Cursor build emits hook token fields.
 
 ## Run checks from the repository root
 

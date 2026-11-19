@@ -125,19 +125,29 @@ def start_event(
 
 
 def heartbeat_event(
-    agent: str, session_id: str, key: str, occurred: datetime, progress: str
+    agent: str,
+    session_id: str,
+    key: str,
+    occurred: datetime,
+    progress: str,
+    *,
+    attributes: dict[str, Any] | None = None,
+    critical: bool = False,
 ) -> MappedEvent:
+    payload: dict[str, Any] = {
+        "event_id": str(event_id_for(key)),
+        "event_type": "heartbeat",
+        "occurred_at": iso(occurred),
+        "progress": progress,
+        "_trace_id": str(trace_id_for_session(agent, session_id)),
+    }
+    if attributes:
+        payload["attributes"] = attributes
     return MappedEvent(
         event_id=event_id_for(key),
         kind="events",
-        critical=False,
-        payload={
-            "event_id": str(event_id_for(key)),
-            "event_type": "heartbeat",
-            "occurred_at": iso(occurred),
-            "progress": progress,
-            "_trace_id": str(trace_id_for_session(agent, session_id)),
-        },
+        critical=critical,
+        payload=payload,
     )
 
 

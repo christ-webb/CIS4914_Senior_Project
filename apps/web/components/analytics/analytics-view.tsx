@@ -7,7 +7,7 @@ import { EmptyState, LiveStatus, PageHeader } from "@/components/shell/page-head
 import { usePolling } from "@/hooks/use-polling";
 import { fetchFullTraces } from "@/lib/api";
 import { projectStats, slowestSpans, spanTypeStats, timeBuckets } from "@/lib/analytics";
-import { formatCompact, formatCost, formatMs, percentile } from "@/lib/stats";
+import { formatCompact, formatCost, formatMs, isCompleteEstimate, isMeasuredCost, isMeasuredTokens, percentile } from "@/lib/stats";
 
 export function AnalyticsView() {
   const { data, online, loading, updatedAt, refresh } = usePolling(fetchFullTraces, 15000);
@@ -22,8 +22,23 @@ export function AnalyticsView() {
       successRate: runs ? (successful / runs) * 100 : 0,
       p50: percentile(durations, 50),
       p95: percentile(durations, 95),
-      costPerRun: runs ? traces.reduce((a, trace) => a + trace.total_cost_usd, 0) / runs : 0,
-      tokensPerRun: runs ? traces.reduce((a, trace) => a + trace.total_tokens, 0) / runs : 0,
+      costPerRun: (() => {
+        const measured = traces.filter(isMeasuredCost);
+        return measured.length ? measured.reduce((a, trace) => a + trace.total_cost_usd, 0) / measured.length : 0;
+      })(),
+      tokensPerRun: (() => {
+        const measured = traces.filter(isMeasuredTokens);
+        return measured.length ? measured.reduce((a, trace) => a + trace.total_tokens, 0) / measured.length : 0;
+      })(),
+      costMeasured: traces.some(isMeasuredCost),
+      tokensMeasured: traces.some(isMeasuredTokens),
+      estimatedPerRun: (() => {
+        const measured = traces.filter(isCompleteEstimate);
+        return measured.length
+          ? measured.reduce((a, trace) => a + (trace.estimated_cost_usd ?? 0), 0) / measured.length
+          : 0;
+      })(),
+      estimatedMeasured: traces.some(isCompleteEstimate),
     };
   }, [traces]);
   const types = useMemo(() => spanTypeStats(traces), [traces]);
@@ -54,10 +69,13 @@ export function AnalyticsView() {
               <div><span className="kpi-label">Median latency</span><strong>{formatMs(summary.p50)}</strong><small className="muted">p95 {formatMs(summary.p95)}</small></div>
             </div>
             <div className="card kpi">
-              <div><span className="kpi-label">Cost / run</span><strong>{formatCost(summary.costPerRun)}</strong><small className="muted">average</small></div>
+              <div><span className="kpi-label">Actual billed / run</span><strong className="billed-cost">{summary.costMeasured ? formatCost(summary.costPerRun) : "Not reported"}</strong><small className="muted">provider-reported</small></div>
             </div>
             <div className="card kpi">
-              <div><span className="kpi-label">Tokens / run</span><strong>{formatCompact(summary.tokensPerRun)}</strong><small className="muted">average</small></div>
+              <div><span className="kpi-label">Estimated / run</span><strong className="estimated-cost">{summary.estimatedMeasured ? formatCost(summary.estimatedPerRun) : "Estimate unavailable"}</strong><small className="muted">complete estimates only</small></div>
+            </div>
+            <div className="card kpi">
+              <div><span className="kpi-label">Tokens / run</span><strong>{summary.tokensMeasured ? formatCompact(summary.tokensPerRun) : "Not reported"}</strong><small className="muted">measured average</small></div>
             </div>
           </section>
 
@@ -82,7 +100,7 @@ export function AnalyticsView() {
             <div className="card table-card">
               <div className="card-head"><h3>Span types</h3></div>
               <table className="table">
-                <thead><tr><th>Type</th><th>Spans</th><th>Avg</th><th>p95</th><th>Errors</th><th>Cost</th></tr></thead>
+                <thead><tr><th>Type</th><th>Spans</th><th>Avg</th><th>p95</th><th>Errors</th><th>Billed cost</th></tr></thead>
                 <tbody>
                   {types.map((stat) => (
                     <tr key={stat.type}>
@@ -118,7 +136,7 @@ export function AnalyticsView() {
           <section className="card table-card">
             <div className="card-head"><h3>Cost by project</h3></div>
             <table className="table">
-              <thead><tr><th>Project</th><th>Runs</th><th>Failed</th><th>Tokens</th><th>Cost</th></tr></thead>
+              <thead><tr><th>Project</th><th>Runs</th><th>Failed</th><th>Tokens</th><th>Estimated</th><th>Billed</th></tr></thead>
               <tbody>
                 {projects.map((project) => (
                   <tr key={project.project}>
@@ -126,7 +144,8 @@ export function AnalyticsView() {
                     <td className="num">{project.runs}</td>
                     <td className={`num ${project.errors ? "bad-text" : ""}`}>{project.errors}</td>
                     <td className="num">{project.tokens.toLocaleString()}</td>
-                    <td className="num">{formatCost(project.cost)}</td>
+                    <td className="num estimated-cost">{project.estimatedCost ? formatCost(project.estimatedCost) : "—"}</td>
+                    <td className="num billed-cost">{project.cost ? formatCost(project.cost) : "Not reported"}</td>
                   </tr>
                 ))}
               </tbody>

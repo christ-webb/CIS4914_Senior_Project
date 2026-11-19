@@ -16,3 +16,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/no_more_500s_api"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/no_more_500s_api/pricing/registry.json" = "no_more_500s_api/pricing/registry.json"

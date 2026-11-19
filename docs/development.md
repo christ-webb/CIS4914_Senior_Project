@@ -35,8 +35,9 @@ The example credentials are only for local development. The mounted
 with `IF NOT EXISTS`. Existing Compose volumes retain data. The API adds the
 `ingestion_id` column with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on first
 use and creates `run_events` if missing; it does not drop volumes or rewrite
-historical rows. `NM5_RUN_INACTIVITY_SECONDS` (default 120) controls when a
-running live trace is displayed as `interrupted`.
+historical rows. `NM5_RUN_INACTIVITY_SECONDS` (default 120) controls when an in-progress live
+trace is displayed as `interrupted`. Cursor sessions that have completed a turn
+remain `running`/`idle` until `sessionEnd`.
 
 ### Verify history survives restarts
 

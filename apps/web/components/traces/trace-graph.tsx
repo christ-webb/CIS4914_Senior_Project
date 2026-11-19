@@ -3,6 +3,7 @@
 import { Background, Controls, Edge, Node, ReactFlow } from "@xyflow/react";
 import { useMemo } from "react";
 
+import { formatBilledCostLabel, formatEstimatedCostLabel, formatTokenLabel } from "@/lib/stats";
 import type { Span, Trace } from "@/lib/types";
 
 export function toGraph(spans: Span[]): { nodes: Node[]; edges: Edge[] } {
@@ -35,8 +36,9 @@ export function TraceGraph({ trace }: { trace: Trace }) {
         </div>
         <dl>
           <div><dt>Duration</dt><dd>{trace.duration_ms.toFixed(0)} ms</dd></div>
-          <div><dt>Tokens</dt><dd>{trace.total_tokens}</dd></div>
-          <div><dt>Cost</dt><dd>${trace.total_cost_usd.toFixed(4)}</dd></div>
+          <div><dt>Tokens</dt><dd>{formatTokenLabel(trace.total_tokens, trace.token_status)}</dd></div>
+          <div><dt>Estimated</dt><dd className="estimated-cost">{formatEstimatedCostLabel(trace.estimated_cost_usd, trace.estimated_cost_status)}</dd></div>
+          <div><dt>Billed</dt><dd className="billed-cost">{formatBilledCostLabel(trace.total_cost_usd, trace.cost_status)}</dd></div>
         </dl>
       </div>
       <div className="graph" aria-label={`Execution graph for ${trace.name}`}>

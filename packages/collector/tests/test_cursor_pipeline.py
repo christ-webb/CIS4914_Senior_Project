@@ -83,6 +83,50 @@ def test_missing_session_start_is_inferred(
     assert starts[0]["attributes"]["nm5.source"] == "cursor"
 
 
+def test_cursor_stop_usage_is_generation_keyed(
+    pipeline: tuple[Pipeline, RecordingClient],
+) -> None:
+    pipe, client = pipeline
+    pipe.ingest(_cursor_start(), "c-start", source="cursor")
+    pipe.ingest(
+        {
+            "hook_event_name": "afterAgentResponse",
+            "conversation_id": "conv-1",
+            "generation_id": "g1",
+            "status": "completed",
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "text": "secret",
+        },
+        "c-response",
+        source="cursor",
+    )
+    pipe.ingest(
+        {
+            "hook_event_name": "stop",
+            "conversation_id": "conv-1",
+            "generation_id": "g1",
+            "status": "completed",
+            "input_tokens": 12,
+            "output_tokens": 3,
+        },
+        "c-stop",
+        source="cursor",
+    )
+    pipe.flush_once()
+    events = [
+        item
+        for path, payload in client.calls
+        if str(path).endswith("/events")
+        for item in payload
+    ]
+    llm = [item for item in events if item.get("type") == "llm"]
+    assert len(llm) == 2
+    assert llm[0]["span_id"] == llm[1]["span_id"]
+    assert llm[1]["token_count"] == 15
+    assert all("text" not in item.get("attributes", {}) for item in llm)
+
+
 def test_duplicate_cursor_delivery_is_idempotent(
     pipeline: tuple[Pipeline, RecordingClient],
 ) -> None:

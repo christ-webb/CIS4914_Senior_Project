@@ -36,7 +36,7 @@ are different findings. The growing set of span ids is never the fingerprint.
 | `schema_mismatch` | Existing parameter-error markers or structured validation metadata |
 | `ineffective_recovery` | Repeated failed attempts with unchanged arguments, or a failing A/B cycle |
 | `interruption` | Lifecycle `interrupted`. Not classified as a failed agent |
-| `stall` | Long unset spans or telemetry silence on a still-running trace |
+| `stall` | Long unset spans or telemetry silence on a still-executing trace. Idle open Cursor sessions are not stalls |
 | `provider_error` | LLM spans with recorded error status / provider codes |
 | `latency_anomaly` | Absolute duration threshold or historical comparison |
 | `token_anomaly` / `cost_anomaly` | Absolute or historical, only when usage is reported |
@@ -106,6 +106,8 @@ finding ids stay the same.
 - Parameter errors without structured schema metadata are heuristic text
   matches.
 - Codex CLI 0.153.x cannot produce model, token, or cost findings.
+- Individual Cursor Pro IDE hooks do not report billed cost; token findings
+  require optional hook token fields that this Cursor build may omit.
 - Historical comparison uses only peers inside the bounded window.
 - False negatives: failures that never appear in span status or attributes.
 - False positives: legitimate repeated successful tools (shown as `info`).

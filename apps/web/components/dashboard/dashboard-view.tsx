@@ -8,11 +8,11 @@ import { Donut, LatencyBars, Sparkline } from "@/components/dashboard/charts";
 import { EmptyState, LiveStatus, PageHeader } from "@/components/shell/page-header";
 import { usePolling } from "@/hooks/use-polling";
 import { fetchTraces } from "@/lib/api";
-import { computeStats, formatCompact, formatCost, formatCostLabel, formatMs, formatTokenLabel, recentTraces, statusCounts } from "@/lib/stats";
-import { isActiveLifecycle, traceLifecycle, type TraceSummary } from "@/lib/types";
+import { computeStats, formatCompact, formatCost, formatBilledCostLabel, formatEstimatedCostLabel, formatMs, formatTokenLabel, recentTraces, statusCounts } from "@/lib/stats";
+import { isExecutingRun, isIdleOpenRun, needsLivePolling, traceLifecycle, type TraceSummary } from "@/lib/types";
 
 function elapsedLabel(trace: TraceSummary, nowMs: number): string {
-  if (isActiveLifecycle(traceLifecycle(trace))) {
+  if (isExecutingRun(trace)) {
     return formatMs(Math.max(0, nowMs - Date.parse(trace.started_at)));
   }
   return formatMs(trace.duration_ms);
@@ -31,11 +31,15 @@ export function DashboardView() {
   const failed = useMemo(() => latest.filter((trace) => trace.status === "error"), [latest]);
   const maxDuration = Math.max(1, ...latest.map((trace) => trace.duration_ms));
   const liveRuns = useMemo(
-    () => traces.filter((trace) => isActiveLifecycle(traceLifecycle(trace))),
+    () => traces.filter((trace) => isExecutingRun(trace)),
+    [traces],
+  );
+  const idleRuns = useMemo(
+    () => traces.filter((trace) => isIdleOpenRun(trace)),
     [traces],
   );
 
-  const nextInterval = liveRuns.length > 0 ? 2000 : 5000;
+  const nextInterval = traces.some((trace) => needsLivePolling(trace)) ? 2000 : 5000;
   if (nextInterval !== intervalMs) setIntervalMs(nextInterval);
 
   useEffect(() => {
@@ -84,25 +88,36 @@ export function DashboardView() {
             <div className="card kpi">
               <div>
                 <span className="kpi-label">Tokens</span>
-                <strong>{formatCompact(stats.totalTokens)}</strong>
-                <small className="muted">{stats.totalTokens.toLocaleString()} total</small>
+                <strong>{stats.totalTokens > 0 ? formatCompact(stats.totalTokens) : "Not reported"}</strong>
+                <small className="muted">measured totals only</small>
               </div>
               <Sparkline values={recent.map((trace) => trace.total_tokens)} color="var(--violet)" />
             </div>
             <div className="card kpi">
               <div>
-                <span className="kpi-label">Cost</span>
-                <strong>{formatCost(stats.totalCostUsd)}</strong>
-                <small className="muted">across all runs</small>
+                <span className="kpi-label">Actual billed cost</span>
+                <strong className="billed-cost">{stats.totalCostUsd > 0 ? formatCost(stats.totalCostUsd) : "Not reported"}</strong>
+                <small className="muted">provider-reported charges only</small>
               </div>
               <Sparkline values={recent.map((trace) => trace.total_cost_usd)} color="var(--ok)" />
+            </div>
+            <div className="card kpi">
+              <div>
+                <span className="kpi-label">Estimated model cost</span>
+                <strong className="estimated-cost">{stats.estimatedCostUsd > 0 ? formatCost(stats.estimatedCostUsd) : "Estimate unavailable"}</strong>
+                <small className="muted">complete estimates only; published rates</small>
+              </div>
+              <Sparkline
+                values={recent.map((trace) => (trace.estimated_cost_status === "complete" ? trace.estimated_cost_usd ?? 0 : 0))}
+                color="var(--violet)"
+              />
             </div>
           </section>
 
           <section className="card active-runs" aria-label="Active runs">
             <div className="card-head">
               <h3>Active runs</h3>
-              <span className="muted">{liveRuns.length} live</span>
+              <span className="muted">{liveRuns.length} executing</span>
             </div>
             {liveRuns.length === 0 ? (
               <p className="muted">No agents are reporting telemetry right now.</p>
@@ -137,6 +152,35 @@ export function DashboardView() {
             )}
           </section>
 
+          <section className="card active-runs" aria-label="Idle or open sessions">
+            <div className="card-head">
+              <h3>Idle / Open</h3>
+              <span className="muted">{idleRuns.length} sessions</span>
+            </div>
+            {idleRuns.length === 0 ? (
+              <p className="muted">No open sessions waiting on the next turn.</p>
+            ) : (
+              <div className="active-runs-list">
+                {idleRuns.map((trace) => {
+                  const lifecycle = traceLifecycle(trace);
+                  return (
+                    <Link key={trace.trace_id} href={`/traces/${trace.trace_id}`} className="active-run-row">
+                      <span>
+                        <strong>{trace.name}</strong>
+                        <small className="muted"> {trace.project_id}</small>
+                        {trace.source && <span className="pill">{trace.source}</span>}
+                      </span>
+                      <span className="muted">
+                        <span className={`pill ${lifecycle}`}>{lifecycle}</span>{" "}
+                        <span className="pill idle">idle</span>
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
           <section className="card chart-card">
             <div className="card-head">
               <h3>Latency by run</h3>
@@ -155,7 +199,7 @@ export function DashboardView() {
               </div>
               <table className="table">
                 <thead>
-                  <tr><th>Run</th><th>Project</th><th>Source</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Cost</th><th>Started</th></tr>
+                  <tr><th>Run</th><th>Project</th><th>Source</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Estimated</th><th>Billed</th><th>Started</th></tr>
                 </thead>
                 <tbody>
                   {latest.map((trace) => {
@@ -171,7 +215,8 @@ export function DashboardView() {
                           <span className="run-bar inline"><i className={trace.status} style={{ width: `${(trace.duration_ms / maxDuration) * 100}%` }} /></span>
                         </td>
                         <td className="num">{formatTokenLabel(trace.total_tokens, trace.token_status)}</td>
-                        <td className="num">{formatCostLabel(trace.total_cost_usd, trace.cost_status)}</td>
+                        <td className="num estimated-cost">{formatEstimatedCostLabel(trace.estimated_cost_usd, trace.estimated_cost_status)}</td>
+                        <td className="num billed-cost">{formatBilledCostLabel(trace.total_cost_usd, trace.cost_status)}</td>
                         <td className="muted">{new Date(trace.started_at).toLocaleTimeString()}</td>
                       </tr>
                     );

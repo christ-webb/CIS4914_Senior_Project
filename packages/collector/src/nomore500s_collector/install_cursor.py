@@ -20,6 +20,8 @@ CURSOR_EVENTS = [
     "subagentStop",
     "stop",
     "preCompact",
+    "afterAgentResponse",
+    "afterAgentThought",
 ]
 PERMISSION_EVENTS = (
     "preToolUse",

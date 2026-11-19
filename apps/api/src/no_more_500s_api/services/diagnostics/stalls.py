@@ -6,7 +6,7 @@ from no_more_500s_api.domain.diagnostics import (
     FindingConfidence,
     FindingSeverity,
 )
-from no_more_500s_api.domain.models import RunLifecycle, SpanStatus, Trace
+from no_more_500s_api.domain.models import ExecutionState, RunLifecycle, SpanStatus, Trace
 from no_more_500s_api.services.diagnostics.findings import build_finding
 from no_more_500s_api.services.diagnostics.ids import TRACE_ANCHOR
 
@@ -61,7 +61,11 @@ def analyze_stalls(
             )
         )
 
-    if trace.lifecycle is RunLifecycle.RUNNING and idle >= inactivity_seconds:
+    if (
+        trace.lifecycle is RunLifecycle.RUNNING
+        and idle >= inactivity_seconds
+        and trace.execution_state is not ExecutionState.IDLE
+    ):
         findings.append(
             build_finding(
                 trace=trace,
@@ -102,7 +106,11 @@ def analyze_stalls(
         and span not in long_spans
     ]
     candidates = long_spans + open_long
-    if candidates and trace.lifecycle in {RunLifecycle.RUNNING, RunLifecycle.INTERRUPTED}:
+    if (
+        candidates
+        and trace.lifecycle in {RunLifecycle.RUNNING, RunLifecycle.INTERRUPTED}
+        and trace.execution_state is not ExecutionState.IDLE
+    ):
         findings.append(
             build_finding(
                 trace=trace,

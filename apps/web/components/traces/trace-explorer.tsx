@@ -15,7 +15,7 @@ import {
   type TraceListParams,
 } from "@/lib/history";
 import { formatMs } from "@/lib/stats";
-import { isActiveLifecycle, traceLifecycle, type SpanStatus, type TraceSummary } from "@/lib/types";
+import { executionState, needsLivePolling, traceLifecycle, type SpanStatus, type TraceSummary } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 const STATUSES: Array<"all" | SpanStatus> = ["all", "ok", "error", "unset"];
@@ -93,9 +93,9 @@ export function TraceExplorer() {
   }, [activeId]);
   const [detailInterval, setDetailInterval] = useState(10000);
   const detail = usePolling(loadDetail, detailInterval);
-  const nextHistory = traces.some((trace) => isActiveLifecycle(traceLifecycle(trace))) ? 2000 : 10000;
+  const nextHistory = traces.some((trace) => needsLivePolling(trace)) ? 2000 : 10000;
   if (nextHistory !== historyInterval) setHistoryInterval(nextHistory);
-  const nextDetail = detail.data && !isActiveLifecycle(traceLifecycle(detail.data)) ? 0 : 2000;
+  const nextDetail = detail.data && !needsLivePolling(detail.data) ? 0 : 2000;
   if (nextDetail !== detailInterval) setDetailInterval(nextDetail);
 
   const replaceParams = useCallback(
@@ -243,7 +243,10 @@ export function TraceExplorer() {
                     {trace.provider ? ` · ${trace.provider}` : ""}
                     {trace.workspace ? ` · ${trace.workspace}` : ""}
                     {" · "}
-                    {traceLifecycle(trace)} · {formatMs(trace.duration_ms)}
+                    {traceLifecycle(trace)}
+                    {executionState(trace) !== "unknown" ? ` · ${executionState(trace)}` : ""}
+                    {" · "}
+                    {formatMs(trace.duration_ms)}
                   </small>
                 </button>
               ))}

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from no_more_500s_api.domain.diagnostics import DetectionType, FindingConfidence, FindingSeverity
 from no_more_500s_api.domain.models import (
+    ExecutionState,
     RunLifecycle,
     Span,
     SpanStatus,
@@ -171,6 +172,35 @@ def test_timeout_tool_failure() -> None:
         item for item in result.findings if item.detection_type is DetectionType.TOOL_FAILURE
     )
     assert any("Timeout" in line or "timed_out" in line for line in finding.evidence)
+
+
+def test_idle_open_cursor_session_is_not_a_stall() -> None:
+    created = _trace(
+        [
+            Span(
+                type=SpanType.AGENT,
+                name="cursor",
+                duration_ms=45_000,
+                status=SpanStatus.UNSET,
+                started_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        ],
+        lifecycle=RunLifecycle.RUNNING,
+        attributes={"nm5.source": "cursor", "agent.framework": "cursor"},
+        status=SpanStatus.UNSET,
+    )
+    created = created.model_copy(
+        update={
+            "execution_state": ExecutionState.IDLE,
+            "last_activity_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+    )
+    result = analyze_trace(
+        created,
+        _ctx(now=datetime(2026, 1, 1, 0, 5, tzinfo=UTC), inactivity_seconds=120),
+    )
+    assert DetectionType.STALL.value not in _types(result)
+    assert DetectionType.INTERRUPTION.value not in _types(result)
 
 
 def test_interrupted_run_is_not_a_failed_agent() -> None:

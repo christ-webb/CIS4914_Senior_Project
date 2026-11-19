@@ -1,6 +1,7 @@
 export type SpanStatus = "unset" | "ok" | "error";
 export type SpanType = "agent" | "llm" | "tool" | "workflow";
 export type RunLifecycle = "running" | "completed" | "failed" | "cancelled" | "interrupted" | "unknown";
+export type ExecutionState = "executing" | "idle" | "unknown";
 
 export interface Span {
   span_id: string;
@@ -27,6 +28,7 @@ export interface TraceSummary {
   total_cost_usd: number;
   status: SpanStatus;
   lifecycle?: RunLifecycle;
+  execution_state?: ExecutionState;
   last_activity_at?: string | null;
   ended_at?: string | null;
   source?: string | null;
@@ -35,7 +37,18 @@ export interface TraceSummary {
   workspace?: string | null;
   cost_status?: string | null;
   token_status?: string | null;
+  usage_scope?: string | null;
   instrumentation_coverage?: string | null;
+  estimated_cost_usd?: number | null;
+  estimated_cost_status?: string | null;
+  estimated_subtotal_usd?: number | null;
+  model?: string | null;
+  model_variant?: string | null;
+  estimate_basis?: string | null;
+  scenario_standard_usd?: number | null;
+  scenario_fast_usd?: number | null;
+  covered_generations?: number | null;
+  total_generations?: number | null;
 }
 
 export interface Trace extends TraceSummary {
@@ -115,6 +128,53 @@ export function traceLifecycle(trace: Pick<TraceSummary, "lifecycle" | "status">
   return "unknown";
 }
 
+export function executionState(
+  trace: Pick<TraceSummary, "execution_state"> | ExecutionState | null | undefined,
+): ExecutionState {
+  if (typeof trace === "string") return trace;
+  return trace?.execution_state ?? "unknown";
+}
+
+type CursorHint = Pick<TraceSummary, "source" | "agent_framework"> & {
+  attributes?: Record<string, unknown>;
+};
+
+export function isCursorTrace(trace: CursorHint): boolean {
+  if (trace.source === "cursor" || trace.agent_framework === "cursor") return true;
+  const attrs = trace.attributes;
+  if (!attrs) return false;
+  return (
+    attrs["nm5.source"] === "cursor" ||
+    attrs["agent.framework"] === "cursor" ||
+    attrs["nm5.agent"] === "cursor"
+  );
+}
+
+export function isExecutingRun(
+  trace: Pick<TraceSummary, "lifecycle" | "status" | "execution_state" | "source" | "agent_framework"> & {
+    attributes?: Record<string, unknown>;
+  },
+): boolean {
+  if (executionState(trace) === "idle") return false;
+  const lifecycle = traceLifecycle(trace);
+  if (isCursorTrace(trace)) {
+    return lifecycle === "running" && executionState(trace) === "executing";
+  }
+  return lifecycle === "running" || lifecycle === "interrupted";
+}
+
+export function isIdleOpenRun(
+  trace: Pick<TraceSummary, "lifecycle" | "status" | "execution_state" | "source" | "agent_framework"> & {
+    attributes?: Record<string, unknown>;
+  },
+): boolean {
+  return isCursorTrace(trace) && traceLifecycle(trace) === "running" && executionState(trace) === "idle";
+}
+
 export function isActiveLifecycle(lifecycle: RunLifecycle): boolean {
   return lifecycle === "running" || lifecycle === "interrupted";
+}
+
+export function needsLivePolling(trace: Pick<TraceSummary, "lifecycle" | "status" | "execution_state" | "source" | "agent_framework">): boolean {
+  return isExecutingRun(trace);
 }
