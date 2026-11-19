@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -113,6 +113,8 @@ def finalize_run(
 @router.get("/traces", response_model=list[TraceSummary])
 def list_traces(
     trace_repository: RepositoryDependency,
+    fixtures: Literal["exclude", "only", "include"] = "include",
+    activity: Literal["active", "idle", "terminal", "completed_turns"] | None = None,
     project_id: str | None = None,
     status_filter: Annotated[SpanStatus | None, Query(alias="status")] = None,
     lifecycle: RunLifecycle | None = None,
@@ -125,6 +127,8 @@ def list_traces(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[TraceSummary]:
     query = TraceListQuery(
+        fixtures=fixtures,
+        activity=activity,
         project_id=project_id,
         status=status_filter,
         lifecycle=lifecycle,
@@ -202,6 +206,7 @@ def _bounded_limit(requested: int | None) -> int:
 @router.get("/diagnostics", response_model=DiagnosticSummary)
 def get_diagnostic_summary(
     trace_repository: RepositoryDependency,
+    fixtures: Literal["exclude", "only", "include"] = "include",
     project_id: str | None = None,
     status_filter: Annotated[SpanStatus | None, Query(alias="status")] = None,
     lifecycle: RunLifecycle | None = None,
@@ -213,6 +218,7 @@ def get_diagnostic_summary(
     """Analyze a bounded recent window of traces. Counts are not all-history."""
     window = _bounded_limit(limit)
     query = TraceListQuery(
+        fixtures=fixtures,
         project_id=project_id,
         status=status_filter,
         lifecycle=lifecycle,
@@ -249,7 +255,11 @@ def get_trace_diagnostics(
         peer_limit = _bounded_limit(None)
         peers = _load_traces(
             trace_repository,
-            TraceListQuery(project_id=trace.project_id, limit=peer_limit),
+            TraceListQuery(
+                project_id=trace.project_id,
+                limit=peer_limit,
+                fixtures="only" if trace.attributes.get("nm5.is_fixture") is True else "exclude",
+            ),
         )
     except TraceNotFoundError as error:
         raise HTTPException(status_code=404, detail="Trace not found") from error

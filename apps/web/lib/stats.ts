@@ -88,7 +88,18 @@ export function filterTraces(
 }
 
 export function formatMs(ms: number): string {
+  if (ms >= 60_000) return formatDuration(ms);
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(0)} ms`;
+}
+
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 1000) return `${Math.max(0, Math.round(ms || 0))}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+  const totalMinutes = Math.floor(seconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m ${Math.round(seconds % 60)}s`;
+  const hours = Math.floor(totalMinutes / 60);
+  return hours < 48 ? `${hours}h ${totalMinutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
 export function formatCost(usd: number): string {

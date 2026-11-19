@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Trace ingestion and query API for No More 500s"
 requires-python = ">=3.12"
 dependencies = [
+  "no-more-500s-collector",
   "clickhouse-connect>=0.8,<1",
   "fastapi>=0.115,<1",
   "pydantic-settings>=2.6,<3",
@@ -19,3 +20,9 @@ packages = ["src/no_more_500s_api"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/no_more_500s_api/pricing/registry.json" = "no_more_500s_api/pricing/registry.json"
+
+[project.scripts]
+nm5-history = "no_more_500s_api.history:main"
+
+[tool.uv.sources]
+no-more-500s-collector = { workspace = true }

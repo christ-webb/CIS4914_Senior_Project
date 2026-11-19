@@ -26,6 +26,26 @@ make api-dev
 make web-dev
 ```
 
+These three `make` targets (plus `make collector` when observing IDE/CLI
+hooks) must run in **separate OS terminals**, not Cursor's integrated
+terminals. Processes started inside Cursor die when the IDE quits, which
+looks like a dashboard outage at `http://localhost:3000` even though
+ClickHouse is still healthy. From macOS Terminal.app, in the repo root:
+
+```bash
+mkdir -p .local/logs
+make clickhouse
+nohup make api-dev > .local/logs/api.log 2>&1 &
+NM5_API_URL=http://127.0.0.1:8000 nohup make collector > .local/logs/collector.log 2>&1 &
+nohup make web-dev > .local/logs/web.log 2>&1 &
+```
+
+`NM5_API_URL` must match the registered history target
+`http://127.0.0.1:8000` exactly. Do not `docker compose down -v`, recreate
+the database, or clear history as part of ordinary startup. Confirm with
+`curl -s http://127.0.0.1:8000/health`, `curl -s http://127.0.0.1:8788/health`,
+and `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000`.
+
 The API reads `NM5_CLICKHOUSE_HOST`, `NM5_CLICKHOUSE_PORT`,
 `NM5_CLICKHOUSE_DATABASE`, `NM5_CLICKHOUSE_USER`, and
 `NM5_CLICKHOUSE_PASSWORD`. Compose uses `CLICKHOUSE_DATABASE`,

@@ -18,7 +18,11 @@ def main() -> None:
         name="repeated missing file",
         agent_name="diagnostic-agent",
         agent_input={"task": "read missing path"},
-        attributes={"nm5.token_status": "reported", "nm5.cost_status": "reported"},
+        attributes={
+            "nm5.is_fixture": True,
+            "nm5.token_status": "reported",
+            "nm5.cost_status": "reported",
+        },
     ) as run:
         time.sleep(delay)
         with run.tool("search", input={"query": "project overview"}) as search:

@@ -1,5 +1,6 @@
+import json
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -99,7 +100,7 @@ class Trace(TraceCreate):
         lifecycle = lifecycle_from_batch_status(trace.status)
         ended_at = None
         if lifecycle in {RunLifecycle.COMPLETED, RunLifecycle.FAILED, RunLifecycle.CANCELLED}:
-            ended_at = trace.started_at
+            ended_at = trace.started_at + timedelta(milliseconds=duration)
         return cls(
             **trace.model_dump(),
             duration_ms=duration,
@@ -116,9 +117,7 @@ class Trace(TraceCreate):
         )
 
 
-def _sum_with_status(
-    spans: list[Span], status_key: str, numeric: Callable[[Span], float]
-) -> float:
+def _sum_with_status(spans: list[Span], status_key: str, numeric: Callable[[Span], float]) -> float:
     statuses = [
         span.attributes.get(status_key)
         for span in spans
@@ -161,6 +160,11 @@ def _attr_int(attributes: dict[str, Any], key: str) -> int | None:
 
 
 class TraceSummary(BaseModel):
+    logical_run_id: str | None = None
+    pricing_source: str | None = None
+    is_fixture: bool = False
+    last_turn_completed: bool = False
+    failure_count: int = 0
     trace_id: UUID
     project_id: str
     name: str
@@ -191,14 +195,36 @@ class TraceSummary(BaseModel):
     scenario_fast_usd: float | None = None
     covered_generations: int | None = None
     total_generations: int | None = None
+    turns_total: int = 0
+    turns_completed: int = 0
+    turns_failed: int = 0
+    turns_interrupted: int = 0
+    turns_executing: int = 0
+    turns_provisional: int = 0
+    latest_turn_status: str | None = None
+    latest_turn_evidence: str | None = None
+    latest_turn_completed_at: datetime | None = None
+    task_outcome: str = "unverified"
+    task_outcome_source: str | None = None
 
     @classmethod
     def from_trace(cls, trace: Trace) -> "TraceSummary":
         attributes = trace.attributes
+        turns = _turn_fields(trace)
+        source = _attr_str(attributes, "nm5.source", "agent.framework")
+        session = _attr_str(attributes, "nm5.conversation_id", "nm5.session_id")
+        logical_run_id = (
+            json.dumps([source, trace.project_id, session]) if source and session else None
+        )
         dump = trace.model_dump(exclude={"spans", "attributes"})
         dump.pop("estimated_cost_usd", None)
         return cls(
             **dump,
+            logical_run_id=logical_run_id,
+            pricing_source=_attr_str(attributes, "nm5.pricing_source"),
+            is_fixture=attributes.get("nm5.is_fixture") is True,
+            last_turn_completed=attributes.get("nm5.last_turn_completed") is True,
+            failure_count=sum(span.status is SpanStatus.ERROR for span in trace.spans),
             source=_attr_str(attributes, "nm5.source"),
             agent_framework=_attr_str(attributes, "agent.framework", "nm5.agent"),
             provider=_attr_str(attributes, "gen_ai.provider"),
@@ -217,7 +243,43 @@ class TraceSummary(BaseModel):
             scenario_fast_usd=_attr_float(attributes, "nm5.scenario_fast_usd"),
             covered_generations=_attr_int(attributes, "nm5.estimate_covered_generations"),
             total_generations=_attr_int(attributes, "nm5.estimate_total_generations"),
+            **turns,
         )
+
+
+def _turn_fields(trace: Trace) -> dict[str, Any]:
+    attributes = trace.attributes
+    outcome = _attr_str(attributes, "nm5.task_outcome_status") or "unverified"
+    outcome_source = _attr_str(attributes, "nm5.task_outcome_source")
+    if "nm5.turns_total" not in attributes:
+        # Historical batch traces carry one explicit terminal status per run.
+        status = {RunLifecycle.COMPLETED: "completed", RunLifecycle.FAILED: "failed"}.get(
+            trace.lifecycle
+        )
+        return {
+            "turns_total": 1 if status else 0,
+            "turns_completed": 1 if status == "completed" else 0,
+            "turns_failed": 1 if status == "failed" else 0,
+            "latest_turn_status": status,
+            "latest_turn_evidence": "batch.status" if status else None,
+            "latest_turn_completed_at": trace.ended_at if status == "completed" else None,
+            "task_outcome": outcome,
+            "task_outcome_source": outcome_source,
+        }
+    completed_at = _attr_str(attributes, "nm5.latest_turn_completed_at")
+    return {
+        "turns_total": _attr_int(attributes, "nm5.turns_total") or 0,
+        "turns_completed": _attr_int(attributes, "nm5.turns_completed") or 0,
+        "turns_failed": _attr_int(attributes, "nm5.turns_failed") or 0,
+        "turns_interrupted": _attr_int(attributes, "nm5.turns_interrupted") or 0,
+        "turns_executing": _attr_int(attributes, "nm5.turns_executing") or 0,
+        "turns_provisional": _attr_int(attributes, "nm5.turns_provisional") or 0,
+        "latest_turn_status": _attr_str(attributes, "nm5.latest_turn_status"),
+        "latest_turn_evidence": _attr_str(attributes, "nm5.latest_turn_evidence"),
+        "latest_turn_completed_at": datetime.fromisoformat(completed_at) if completed_at else None,
+        "task_outcome": outcome,
+        "task_outcome_source": outcome_source,
+    }
 
 
 class RunStart(BaseModel):

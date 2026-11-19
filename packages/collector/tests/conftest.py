@@ -25,6 +25,11 @@ class RecordingClient(LiveRunClient):
         return 201
 
 
+@pytest.fixture(autouse=True)
+def isolate_history_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NM5_HISTORY_HOME", str(tmp_path / "history-home"))
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> CollectorStore:
     return CollectorStore(tmp_path / "collector.sqlite", max_pending=20)

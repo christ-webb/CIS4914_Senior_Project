@@ -78,3 +78,45 @@ def test_model_hook_maps_tokens_without_cost() -> None:
     assert payload["token_count"] == 10
     assert payload["attributes"]["nm5.cost_status"] == "unavailable"
     assert "cost_usd" not in payload
+
+
+def test_turn_events_forward_turn_identity_and_status() -> None:
+    adapter = CodexAdapter()
+    prompt = adapter.plan(
+        {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "turn_id": "t1"},
+        delivery_id="d1",
+    )
+    assert prompt.events[0].payload["attributes"] == {"nm5.turn_id": "t1"}
+    stop = adapter.plan(
+        {"hook_event_name": "Stop", "session_id": "s1", "turn_id": "t1"}, delivery_id="d2"
+    )
+    attrs = stop.events[0].payload["attributes"]
+    assert attrs["nm5.turn_id"] == "t1"
+    assert attrs["nm5.turn_status"] == "completed"
+    assert attrs["nm5.turn_evidence"] == "codex.Stop"
+    assert stop.events[0].critical is True
+    interrupt = adapter.plan(
+        {"hook_event_name": "Interrupt", "session_id": "s1"}, delivery_id="d3"
+    )
+    attrs = interrupt.events[0].payload["attributes"]
+    assert attrs == {"nm5.turn_status": "interrupted", "nm5.turn_evidence": "codex.Interrupt"}
+    tool = adapter.plan(
+        {
+            "hook_event_name": "PostToolUse",
+            "session_id": "s1",
+            "turn_id": "t1",
+            "tool_use_id": "x",
+            "tool_name": "Bash",
+        },
+        delivery_id="d4",
+    )
+    assert tool.events[0].payload["attributes"]["nm5.turn_id"] == "t1"
+
+
+def test_session_end_never_rewrites_turn_status() -> None:
+    plan = CodexAdapter().plan(
+        {"hook_event_name": "SessionEnd", "session_id": "s1", "reason": "other"},
+        delivery_id="d1",
+    )
+    assert plan.events[0].kind == "finalize"
+    assert "nm5.turn_status" not in (plan.events[0].payload.get("attributes") or {})

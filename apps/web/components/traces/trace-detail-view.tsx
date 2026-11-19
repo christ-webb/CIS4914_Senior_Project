@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
 import { TraceView } from "@/components/traces/trace-view";
-import { LiveStatus, PageHeader } from "@/components/shell/page-header";
+import { LiveStatus, PageHeader, SectionHead } from "@/components/shell/page-header";
 import { usePolling } from "@/hooks/use-polling";
 import { getTrace, getTraceDiagnostics } from "@/lib/api";
 import { sortFindings } from "@/lib/diagnostics";
@@ -34,16 +34,17 @@ export function TraceDetailView({ traceId }: { traceId: string }) {
     <>
       <nav className="crumbs" aria-label="Breadcrumb">
         <Link href="/">Dashboard</Link>
-        <span>/</span>
-        <span>{trace?.name ?? "Trace"}</span>
+        <span aria-hidden="true">/</span>
+        <span>Trace</span>
       </nav>
 
       {!trace ? (
         <>
-          <PageHeader eyebrow="TRACE" title={loading ? "Loading trace…" : "Trace unavailable"} />
-          {!loading && (
+          <PageHeader title="Trace" />
+          {loading ? <p role="status">Loading trace…</p> : (
             <section className="empty-state">
-              <h2>Could not load this trace</h2>
+              <span className="empty-mark" aria-hidden="true" />
+              <h2>Trace unavailable</h2>
               <p>It may not exist, or the API is unreachable.</p>
               <Link href="/" className="btn">Back to dashboard</Link>
             </section>
@@ -51,13 +52,20 @@ export function TraceDetailView({ traceId }: { traceId: string }) {
         </>
       ) : (
         <>
-          <PageHeader
-            eyebrow={`TRACE · ${trace.project_id}`}
-            title={trace.name}
-            subtitle={<span className="mono">{trace.trace_id}</span>}
-            actions={<LiveStatus online={online} updatedAt={updatedAt} onRefresh={refresh} />}
-          />
+          <PageHeader title="Trace" actions={<LiveStatus online={online} updatedAt={updatedAt} onRefresh={refresh} />} />
 
+
+          <div id="trace-execution" className="trace-panel detail">
+            <TraceView
+              key={trace.trace_id}
+              trace={trace}
+              findings={findings}
+              selectedFindingId={selected?.finding_id ?? null}
+              activeId={activeId}
+              onSelectSpan={setActiveId}
+            />
+          </div>
+          <div id="diagnostic-evidence">
           {diagnostics && (
             <DiagnosticsPanel
               trace={trace}
@@ -67,19 +75,10 @@ export function TraceDetailView({ traceId }: { traceId: string }) {
               onSelect={(finding) => {
                 setPickedFinding(finding.finding_id);
                 setActiveId(finding.span_ids[0] ?? null);
+                document.getElementById("trace-execution")?.scrollIntoView({ block: "start" });
               }}
             />
           )}
-
-          <div className="card trace-panel">
-            <TraceView
-              key={trace.trace_id}
-              trace={trace}
-              findings={findings}
-              selectedFindingId={selected?.finding_id ?? null}
-              activeId={activeId}
-              onSelectSpan={setActiveId}
-            />
           </div>
         </>
       )}
@@ -104,20 +103,20 @@ function DiagnosticsPanel({
   const coverage = diagnostics.coverage;
   return (
     <section className="diagnostics-panel">
-      <div className="card findings-list" aria-label="Diagnostic findings">
-        <h3>Diagnostics</h3>
+      <div className="findings-list" aria-label="Diagnostic findings">
+        <SectionHead title="Diagnostics" count={`${findings.length} finding${findings.length === 1 ? "" : "s"}`} />
         <p className="muted">
           {diagnostics.analysis_status === "provisional" ? "Provisional (run still active). " : "Finalized analysis. "}
           {findings.length} finding{findings.length === 1 ? "" : "s"}.
         </p>
         {(coverage.unsupported_detectors.length > 0 || coverage.insufficient_data_detectors.length > 0) && (
-          <p className="muted">
+          <details><summary>Analysis coverage</summary><p className="muted">
             {coverage.token_status === "unavailable" && "Token usage not reported. "}
             {coverage.cost_status === "unavailable" && "Cost not reported. "}
             {coverage.unsupported_detectors.length > 0 && `Unsupported: ${coverage.unsupported_detectors.join(", ")}. `}
             {coverage.insufficient_data_detectors.length > 0 &&
               `Insufficient comparable data: ${coverage.insufficient_data_detectors.join(", ")}.`}
-          </p>
+          </p></details>
         )}
         {findings.length === 0 ? (
           <p className="muted">No diagnostic findings from available telemetry.</p>
@@ -142,7 +141,7 @@ function DiagnosticsPanel({
           </div>
         )}
       </div>
-      <div className="card finding-detail">
+      <div className="finding-detail">
         {selected ? (
           <FindingDetail finding={selected} />
         ) : (
@@ -156,7 +155,7 @@ function DiagnosticsPanel({
 function FindingDetail({ finding }: { finding: DiagnosticFinding }) {
   return (
     <div className="error-detail">
-      <p className="eyebrow">{finding.detection_type.replaceAll("_", " ").toUpperCase()}</p>
+      <p className="kicker">{finding.detection_type.replaceAll("_", " ")}</p>
       <h2>{finding.title}</h2>
       <p>
         <span className={`pill ${finding.severity}`}>{finding.severity}</span>{" "}

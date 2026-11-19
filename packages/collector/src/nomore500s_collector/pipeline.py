@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from nomore500s_collector.adapters.base import Adapter
 from nomore500s_collector.adapters.codex import CodexAdapter
 from nomore500s_collector.adapters.router import select_adapter
 from nomore500s_collector.api_client import DeliveryError, LiveRunClient
+from nomore500s_collector.creation_evidence import payload_identities, verify
 from nomore500s_collector.ids import (
     agent_span_id_for_session,
     store_session_key,
@@ -54,6 +56,12 @@ class Pipeline:
         cleaned = redact_payload(normalize_hook_payload(payload), collect_io=self.collect_io)
         adapter = self.adapter or select_adapter(cleaned, source)
         with self.store.transaction():
+            allowed, reason = self._after_reset_allowed(adapter.name, cleaned)
+            if not allowed:
+                return {
+                    "status": "rejected_reset_boundary",
+                    "reason": reason,
+                }
             existing_delivery = self.store.get_delivery(delivery_id)
             if existing_delivery is not None:
                 return {"status": "duplicate_delivery", "occurrence_key": existing_delivery}
@@ -126,6 +134,24 @@ class Pipeline:
                 "trace_id": str(trace_id),
                 "event_ids": [str(item) for item in event_ids],
             }
+
+    def _after_reset_allowed(self, agent: str, payload: dict[str, Any]) -> tuple[bool, str]:
+        boundary = self.store._meta("history_boundary")
+        if not boundary:
+            return True, "no_boundary"
+        ids = payload_identities(payload)
+        known = bool(ids) and all(
+            self.store.get_session(store_session_key(agent, identity)) is not None
+            for identity in ids
+        )
+        return verify(
+            agent,
+            payload,
+            boundary=boundary,
+            now=datetime.now(UTC),
+            deny_bits=bytes.fromhex(self.store._meta("history_deny") or ""),
+            known_session=known,
+        )
 
     def ingest_otlp_spans(self, spans: list[dict[str, Any]], delivery_id: str) -> dict[str, Any]:
         results: list[dict[str, Any]] = []
@@ -271,7 +297,7 @@ class Pipeline:
                 try:
                     self._deliver(row.kind, row.payload, UUID(row.event_id), row.session_id)
                 except DeliveryError as error:
-                    delay = 0.0 if row.attempts == 0 else min(30.0, 0.25 * (2 ** row.attempts))
+                    delay = 0.0 if row.attempts == 0 else min(30.0, 0.25 * (2**row.attempts))
                     if error.retryable:
                         with self.store.transaction():
                             self.store.mark_retry(row.id, str(error), delay)

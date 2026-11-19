@@ -277,6 +277,9 @@ class CursorAdapter:
             "_span_identities": [f"tool:{identity}"],
             "_span_kind": "tool",
         }
+        generation_id = as_str(payload, "generation_id")
+        if generation_id:
+            body["attributes"]["nm5.generation_id"] = generation_id
         if complete:
             body["status"] = status
             duration = payload.get("duration") or payload.get("duration_ms")
@@ -456,6 +459,9 @@ class CursorAdapter:
         attributes: dict[str, Any] = {
             "nm5.conversation_id": session_id,
             "nm5.turn_status": turn_status,
+            "nm5.turn_evidence": (
+                f"cursor.{event}" if event == "stop" else f"cursor.{event}:provisional"
+            ),
         }
         if generation_id:
             attributes["nm5.generation_id"] = generation_id
@@ -475,7 +481,7 @@ class CursorAdapter:
                 occurred,
                 event,
                 attributes=attributes,
-                critical=parsed.status == "reported",
+                critical=event == "stop" or parsed.status == "reported",
             )
         ]
         token_status = None

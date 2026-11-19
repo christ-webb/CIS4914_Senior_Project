@@ -21,6 +21,7 @@ from no_more_500s_api.domain.models import (
     Trace,
 )
 from no_more_500s_api.pricing.estimate import annotate_span_estimate, estimate_trace_usage
+from no_more_500s_api.services.turns import TurnLedger
 
 CURSOR_TURN_COMPLETE = {"stop", "afterAgentResponse"}
 CURSOR_THOUGHT = "afterAgentThought"
@@ -112,8 +113,10 @@ def _merge_span(existing: Span | None, incoming: dict[str, Any], *, completing: 
         span_type = incoming.get("type") or SpanType.WORKFLOW
         name = incoming.get("name") or "span"
         raw_status = incoming.get("status")
-        status = SpanStatus(raw_status) if raw_status else (
-            SpanStatus.OK if completing else SpanStatus.UNSET
+        status = (
+            SpanStatus(raw_status)
+            if raw_status
+            else (SpanStatus.OK if completing else SpanStatus.UNSET)
         )
         return Span(
             span_id=span_id,
@@ -336,6 +339,8 @@ def reconstruct_trace(
     if not events:
         raise ValueError("cannot reconstruct an empty event log")
 
+    open_work: set[str] = set()
+    generic_heartbeat = False
     ordered = sort_events(events)
     now_utc = _ensure_utc(now or datetime.now(UTC))
     spans: dict[UUID, Span] = {}
@@ -345,15 +350,18 @@ def reconstruct_trace(
     attributes: dict[str, Any] = {}
     stored_lifecycle = RunLifecycle.RUNNING
     ended_at: datetime | None = None
-    last_activity_at = _ensure_utc(ordered[0].received_at)
+    last_activity_at = min(_ensure_utc(ordered[0].received_at), _ensure_utc(ordered[0].occurred_at))
     trace_id = ordered[0].trace_id
     status = SpanStatus.UNSET
     terminal = False
     execution_signals: list[tuple[str, str | None]] = []
+    ledger = TurnLedger(source="sdk")
 
     for event in ordered:
         payload = event.payload
-        last_activity_at = max(last_activity_at, _ensure_utc(event.received_at))
+        last_activity_at = max(
+            last_activity_at, min(_ensure_utc(event.received_at), _ensure_utc(event.occurred_at))
+        )
         trace_id = event.trace_id
 
         if event.event_type is RunEventType.RUN_START:
@@ -361,6 +369,7 @@ def reconstruct_trace(
             name = str(payload.get("name") or name)
             started_at = _parse_datetime(payload.get("started_at"), event.occurred_at)
             attributes = dict(payload.get("attributes") or {})
+            ledger.source = _turn_source(attributes)
             agent_span_id = _as_uuid(payload.get("agent_span_id"))
             if agent_span_id:
                 spans[agent_span_id] = _merge_span(
@@ -394,6 +403,12 @@ def reconstruct_trace(
                 stored_lifecycle = RunLifecycle.FAILED
                 status = SpanStatus.ERROR
             ended_at = _ensure_utc(event.occurred_at)
+            ledger.observe_finalize(
+                raw_status,
+                payload.get("attributes") if isinstance(payload.get("attributes"), dict) else None,
+                ended_at,
+                hook=_is_hook_source(attributes),
+            )
             extra_attrs = payload.get("attributes")
             if isinstance(extra_attrs, dict):
                 attributes = {**attributes, **extra_attrs}
@@ -420,13 +435,21 @@ def reconstruct_trace(
             extra = payload.get("attributes")
             if isinstance(extra, dict):
                 attributes = {**attributes, **extra}
+            generic_heartbeat = True
             progress = payload.get("progress")
             if progress:
                 attributes = {**attributes, "progress": progress}
+            ledger.observe_heartbeat(
+                str(progress) if progress else None,
+                extra if isinstance(extra, dict) else None,
+                _ensure_utc(event.occurred_at),
+            )
             generation_id = None
             if isinstance(extra, dict) and extra.get("nm5.generation_id"):
                 generation_id = str(extra["nm5.generation_id"])
-            if progress in CURSOR_TURN_COMPLETE:
+            if progress in CURSOR_TURN_COMPLETE | {"Stop", "agentStop"}:
+                open_work.clear()
+                generic_heartbeat = False
                 execution_signals.append(("turn_complete", generation_id))
             elif progress == CURSOR_THOUGHT:
                 execution_signals.append(("thought", generation_id))
@@ -442,15 +465,27 @@ def reconstruct_trace(
             span_payload["parent_span_id"] = parent
 
         if event.event_type is RunEventType.SPAN_START:
+            if _is_execution_work(span_payload):
+                open_work.add(str(span_id))
             if terminal and span_id not in spans:
                 continue
             spans[span_id] = _merge_span(spans.get(span_id), span_payload, completing=False)
             if _is_execution_work(span_payload):
                 execution_signals.append(("work", _generation_from_payload(span_payload)))
+                if not terminal:
+                    ledger.observe_work(
+                        span_payload.get("attributes"), _ensure_utc(event.occurred_at)
+                    )
         elif event.event_type is RunEventType.SPAN_COMPLETE:
+            open_work.discard(str(span_id))
+            generic_heartbeat = False
             spans[span_id] = _merge_span(spans.get(span_id), span_payload, completing=True)
             if _is_execution_work(span_payload):
                 execution_signals.append(("work", _generation_from_payload(span_payload)))
+                if not terminal:
+                    ledger.observe_work(
+                        span_payload.get("attributes"), _ensure_utc(event.occurred_at)
+                    )
 
     ordered_spans = sorted(
         spans.values(),
@@ -463,14 +498,37 @@ def reconstruct_trace(
         execution_signals,
         cursor=cursor,
     )
+    hook_source = cursor or attributes.get("nm5.source") in {
+        "cli",
+        "codex",
+        "vscode",
+        "vscode-copilot",
+    }
+    if not cursor and stored_lifecycle not in TERMINAL_LIFECYCLES:
+        execution_state = (
+            ExecutionState.EXECUTING if open_work or generic_heartbeat else ExecutionState.UNKNOWN
+        )
+    if (
+        hook_source
+        and stored_lifecycle not in TERMINAL_LIFECYCLES
+        and execution_signals
+        and execution_signals[-1][0] == "turn_complete"
+    ):
+        execution_state = ExecutionState.IDLE
     effective = _effective_lifecycle(
         stored_lifecycle,
         last_activity_at,
         now_utc,
         inactivity_seconds,
         execution_state=execution_state,
-        cursor=cursor,
+        cursor=cursor or (hook_source and execution_state is ExecutionState.IDLE),
     )
+    if effective in {RunLifecycle.INTERRUPTED, RunLifecycle.UNKNOWN}:
+        execution_state = ExecutionState.UNKNOWN
+    if effective is RunLifecycle.INTERRUPTED:
+        ledger.mark_stale(last_activity_at)
+    attributes.update(ledger.summary_attributes())
+    attributes["nm5.last_turn_completed"] = attributes["nm5.latest_turn_status"] == "completed"
     ordered_spans = [annotate_span_estimate(span) for span in ordered_spans]
     attributes = _rollup_usage_attributes(attributes, ordered_spans)
     return Trace(
@@ -510,6 +568,25 @@ def _is_cursor_source(attributes: dict[str, Any]) -> bool:
     return source == "cursor" or framework == "cursor"
 
 
+def _is_hook_source(attributes: dict[str, Any]) -> bool:
+    return _is_cursor_source(attributes) or attributes.get("nm5.source") in {
+        "cli",
+        "codex",
+        "vscode",
+        "vscode-copilot",
+    }
+
+
+def _turn_source(attributes: dict[str, Any]) -> str:
+    if _is_cursor_source(attributes):
+        return "cursor"
+    agent = str(attributes.get("nm5.agent") or attributes.get("agent.framework") or "")
+    if agent == "codex":
+        return "codex"
+    source = str(attributes.get("nm5.source") or "")
+    return source if source in {"vscode", "vscode-copilot", "cli"} else "sdk"
+
+
 def _generation_from_payload(payload: dict[str, Any]) -> str | None:
     attrs = payload.get("attributes")
     if isinstance(attrs, dict) and attrs.get("nm5.generation_id"):
@@ -547,6 +624,8 @@ def _execution_state(
                 continue
             state = ExecutionState.EXECUTING
         elif kind == "work":
+            if generation_id and generation_id in completed:
+                continue
             state = ExecutionState.EXECUTING
     return state
 
@@ -630,8 +709,7 @@ def _rollup_usage_attributes(
             if total is not None:
                 rolled[dest] = total
         totals_complete = all(
-            span.attributes.get("nm5.token_total_completeness") != "unavailable"
-            or span.token_count
+            span.attributes.get("nm5.token_total_completeness") != "unavailable" or span.token_count
             for span in reported
         )
         billable_complete = all(

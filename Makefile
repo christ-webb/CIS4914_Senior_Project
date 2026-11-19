@@ -36,3 +36,7 @@ typecheck:
 
 check: lint typecheck test
 
+
+.PHONY: test-clickhouse
+test-clickhouse:
+	uv run python scripts/test_clickhouse.py

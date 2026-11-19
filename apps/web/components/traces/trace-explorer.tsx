@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
-import { EmptyState, LiveStatus, PageHeader } from "@/components/shell/page-header";
+import { ArrowIcon, EmptyState, LiveStatus, PageHeader, SectionHead } from "@/components/shell/page-header";
 import { TraceGraph } from "@/components/traces/trace-graph";
 import { usePolling } from "@/hooks/use-polling";
 import { fetchProjects, fetchTraces, getTrace } from "@/lib/api";
@@ -14,8 +14,9 @@ import {
   paginateWindow,
   type TraceListParams,
 } from "@/lib/history";
+import { sessionLabel, turnLabel } from "@/lib/outcomes";
 import { formatMs } from "@/lib/stats";
-import { executionState, needsLivePolling, traceLifecycle, type SpanStatus, type TraceSummary } from "@/lib/types";
+import { needsLivePolling, type SpanStatus, type TraceSummary } from "@/lib/types";
 
 const PAGE_SIZE = 20;
 const STATUSES: Array<"all" | SpanStatus> = ["all", "ok", "error", "unset"];
@@ -31,6 +32,8 @@ function readFilters(params: URLSearchParams): TraceListParams {
   const lifecycle = params.get("lifecycle");
   const allowedLifecycle = ["running", "completed", "failed", "cancelled", "interrupted", "unknown"] as const;
   return {
+    fixtures: params.get("fixtures") === "only" ? "only" : params.get("fixtures") === "include" ? "include" : "exclude",
+    activity: ["active", "idle", "terminal", "completed_turns"].includes(params.get("activity") ?? "") ? params.get("activity") as TraceListParams["activity"] : undefined,
     project_id: params.get("project") || undefined,
     status: status === "ok" || status === "error" || status === "unset" ? status : undefined,
     lifecycle: allowedLifecycle.includes(lifecycle as (typeof allowedLifecycle)[number])
@@ -42,6 +45,10 @@ function readFilters(params: URLSearchParams): TraceListParams {
     started_after: params.get("from") || undefined,
     started_before: params.get("to") || undefined,
   };
+}
+
+function slug(label: string): string {
+  return label.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function datetimeLocalValue(iso: string | undefined): string {
@@ -120,14 +127,11 @@ export function TraceExplorer() {
 
   return (
     <div className="classic-explorer">
-      <PageHeader
-        eyebrow="TRACE EXPLORER"
-        title="Historical agent runs"
-        subtitle="Browse every ingested execution, then open its full trace graph."
-        actions={<LiveStatus online={online} updatedAt={updatedAt} onRefresh={refresh} />}
-      />
+      <PageHeader title="Explorer" actions={<LiveStatus online={online} updatedAt={updatedAt} onRefresh={refresh} />} />
 
-      <section className="card history-toolbar" aria-label="History filters">
+      <section className="filter-band history-toolbar" aria-label="History filters">
+        <label className="filter-field"><span className="muted">Records</span><select className="search" aria-label="Fixture filter" value={filters.fixtures} onChange={e => replaceParams({ fixtures: e.target.value, page: undefined })}><option value="exclude">Ordinary (unmarked included)</option><option value="only">Marked fixtures</option><option value="include">All records</option></select></label>
+        <label className="filter-field"><span className="muted">Activity</span><select className="search" aria-label="Activity filter" value={filters.activity ?? ""} onChange={e => replaceParams({ activity: e.target.value, page: undefined })}><option value="">All activity</option><option value="active">Active</option><option value="idle">Idle / Open</option><option value="completed_turns">Completed turns</option><option value="terminal">Finalized sessions</option></select></label>
         <label className="filter-field">
           <span className="muted">Project</span>
           <select
@@ -226,8 +230,8 @@ export function TraceExplorer() {
         </section>
       ) : (
         <section className="explorer">
-          <aside className="card run-list" aria-label="Agent runs">
-            <h2>Runs</h2>
+          <aside className="run-list" aria-label="Agent runs">
+            <SectionHead title="Runs" count={`Page ${page}`} />
             <div className="run-scroll">
               {traces.map((trace) => (
                 <button
@@ -236,17 +240,13 @@ export function TraceExplorer() {
                   onClick={() => setPickedId(trace.trace_id)}
                   type="button"
                 >
-                  <span>{trace.name}</span>
-                  <small>
-                    {trace.project_id}
-                    {trace.source ? ` · ${trace.source}` : ""}
-                    {trace.provider ? ` · ${trace.provider}` : ""}
-                    {trace.workspace ? ` · ${trace.workspace}` : ""}
-                    {" · "}
-                    {traceLifecycle(trace)}
-                    {executionState(trace) !== "unknown" ? ` · ${executionState(trace)}` : ""}
-                    {" · "}
-                    {formatMs(trace.duration_ms)}
+                  <span className="run-title"><span>{trace.name}</span></span>
+                  <span className="pill-row">
+                    <span className={`pill ${slug(sessionLabel(trace))}`}>{sessionLabel(trace)}</span>
+                    <span className={`pill quiet ${slug(turnLabel(trace))}`}>{turnLabel(trace)}</span>
+                  </span>
+                  <small className="muted">
+                    {new Date(trace.started_at).toLocaleString()} · {formatMs(trace.duration_ms)} · <span className="mono" title={trace.trace_id}>{trace.trace_id.slice(0, 8)}</span>
                   </small>
                 </button>
               ))}
@@ -266,13 +266,13 @@ export function TraceExplorer() {
               </button>
             </div>
           </aside>
-          <div className="card trace-panel">
+          <div className="trace-panel">
             {!detail.online && traces.length > 0 && <p role="alert">Could not load trace.</p>}
             {detail.data ? (
               <>
-                <p>
-                  <Link className="row-link" href={`/traces/${detail.data.trace_id}`}>
-                    Open full trace detail
+                <p className="panel-actions">
+                  <Link className="btn btn-accent" href={`/traces/${detail.data.trace_id}`}>
+                    Open trace <ArrowIcon />
                   </Link>
                 </p>
                 <TraceGraph trace={detail.data} />

@@ -89,11 +89,13 @@ def _load(path: Path) -> dict[str, Any]:
     return raw
 
 
-def wrapper_script(python_executable: Path | None = None) -> str:
+def wrapper_script(python_executable: Path | None = None, *, debug: bool = False) -> str:
     python = shlex.quote(str(python_executable or resolved_python()))
+    debug_default = "1" if debug else ""
     return f"""#!/bin/sh
 # nm5-cursor-hook observe-only wrapper. Always prints {{}} and exits 0.
-NM5_HOOK_DEBUG="${{NM5_HOOK_DEBUG:-}}"
+NM5_HOOK_DEBUG="${{NM5_HOOK_DEBUG:-{debug_default}}}"
+export NM5_HOOK_DEBUG
 NM5_COLLECTOR_HOME="${{NM5_COLLECTOR_HOME:-$HOME/.nomore500s/collector}}"
 LOG_FILE="$NM5_COLLECTOR_HOME/hook.log"
 PYTHON={python}
@@ -129,9 +131,11 @@ exec "$PYTHON" -c \\
 """
 
 
-def write_wrapper(path: Path, python_executable: Path | None = None) -> Path:
+def write_wrapper(
+    path: Path, python_executable: Path | None = None, *, debug: bool = False
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(wrapper_script(python_executable), encoding="utf-8")
+    path.write_text(wrapper_script(python_executable, debug=debug), encoding="utf-8")
     path.chmod(0o755)
     return path
 
@@ -167,6 +171,7 @@ def install_cursor_hooks(
     cursor_home: Path | None = None,
     command: str | None = None,
     python_executable: Path | None = None,
+    debug: bool = False,
 ) -> Path:
     path = hooks_path(project=project, cursor_home=cursor_home)
     document = _load(path)
@@ -178,6 +183,7 @@ def install_cursor_hooks(
         write_wrapper(
             wrapper_path(project=project, cursor_home=cursor_home),
             python_executable=python_executable,
+            debug=debug,
         )
         command_value = wrapper_command(project=project)
     handler = _handler(command_value)

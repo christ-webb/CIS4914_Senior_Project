@@ -44,6 +44,7 @@ HEARTBEAT_EVENTS = {
 }
 
 AGENT = "codex"
+TURN_STATUS_BY_EVENT = {"Stop": "completed", "Interrupt": "interrupted"}
 
 
 def _now() -> datetime:
@@ -68,6 +69,11 @@ def _iso(value: datetime) -> str:
 def _str(payload: dict[str, Any], key: str) -> str | None:
     value = payload.get(key)
     return str(value) if value else None
+
+
+def _turn_attributes(payload: dict[str, Any]) -> dict[str, Any]:
+    turn_id = payload.get("turn_id")
+    return {"nm5.turn_id": str(turn_id)} if isinstance(turn_id, str) and turn_id else {}
 
 
 def occurrence_key(payload: dict[str, Any], delivery_id: str) -> str:
@@ -143,7 +149,7 @@ class CodexAdapter:
                 occurred_at=occurred,
                 workspace=workspace,
                 model=model,
-                events=[self._heartbeat(session_id, key, occurred, event)],
+                events=[self._heartbeat(session_id, key, occurred, event, payload)],
             )
 
         if event == "SessionStart":
@@ -316,19 +322,31 @@ class CodexAdapter:
         )
 
     def _heartbeat(
-        self, session_id: str, key: str, occurred: datetime, progress: str
+        self,
+        session_id: str,
+        key: str,
+        occurred: datetime,
+        progress: str,
+        payload: dict[str, Any],
     ) -> MappedEvent:
+        body: dict[str, Any] = {
+            "event_id": str(event_id_for(key)),
+            "event_type": "heartbeat",
+            "occurred_at": _iso(occurred),
+            "progress": progress,
+            "_trace_id": str(self._trace(session_id)),
+        }
+        attributes = _turn_attributes(payload)
+        if progress in TURN_STATUS_BY_EVENT:
+            attributes["nm5.turn_status"] = TURN_STATUS_BY_EVENT[progress]
+            attributes["nm5.turn_evidence"] = f"codex.{progress}"
+        if attributes:
+            body["attributes"] = attributes
         return MappedEvent(
             event_id=event_id_for(key),
             kind="events",
-            critical=False,
-            payload={
-                "event_id": str(event_id_for(key)),
-                "event_type": "heartbeat",
-                "occurred_at": _iso(occurred),
-                "progress": progress,
-                "_trace_id": str(self._trace(session_id)),
-            },
+            critical=progress in TURN_STATUS_BY_EVENT,
+            payload=body,
         )
 
     def _tool_start(
@@ -350,6 +368,7 @@ class CodexAdapter:
                 "attributes": {
                     "tool.name": tool_name,
                     "nm5.tool_use_id": tool_use_id,
+                    **_turn_attributes(payload),
                 },
                 "_trace_id": str(self._trace(session_id)),
             },
@@ -371,7 +390,11 @@ class CodexAdapter:
             "type": "tool",
             "name": tool_name,
             "status": status,
-            "attributes": {"tool.name": tool_name, "nm5.tool_use_id": tool_use_id},
+            "attributes": {
+                "tool.name": tool_name,
+                "nm5.tool_use_id": tool_use_id,
+                **_turn_attributes(payload),
+            },
             "_trace_id": str(self._trace(session_id)),
         }
         if isinstance(duration, (int, float)) and duration >= 0:

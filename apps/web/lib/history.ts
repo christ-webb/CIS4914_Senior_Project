@@ -1,6 +1,8 @@
 import type { RunLifecycle, SpanStatus } from "./types.ts";
 
 export interface TraceListParams {
+  fixtures?: "exclude" | "only" | "include";
+  activity?: "active" | "idle" | "terminal" | "completed_turns";
   project_id?: string;
   status?: SpanStatus;
   lifecycle?: RunLifecycle;
@@ -15,6 +17,8 @@ export interface TraceListParams {
 
 export function buildTraceListPath(params: TraceListParams = {}): string {
   const search = new URLSearchParams();
+  search.set("fixtures", params.fixtures ?? "exclude");
+  if (params.activity) search.set("activity", params.activity);
   if (params.project_id) search.set("project_id", params.project_id);
   if (params.status) search.set("status", params.status);
   if (params.lifecycle) search.set("lifecycle", params.lifecycle);

@@ -27,12 +27,12 @@ test("mergeLayoutPositions keeps previous node coordinates", () => {
   assert.ok(merged.positions.c);
 });
 
-test("traceLifecycle treats missing field as unknown unless status is terminal", () => {
+test("traceLifecycle does not infer finalization from status", () => {
   assert.equal(traceLifecycle({ status: "unset" }), "unknown");
-  assert.equal(traceLifecycle({ status: "ok" }), "completed");
-  assert.equal(traceLifecycle({ status: "error" }), "failed");
+  assert.equal(traceLifecycle({ status: "ok" }), "unknown");
+  assert.equal(traceLifecycle({ status: "error" }), "unknown");
   assert.equal(traceLifecycle({ status: "unset", lifecycle: "running" }), "running");
-  assert.equal(isExecutingRun({ status: "unset", lifecycle: "interrupted", source: "cli" }), true);
+  assert.equal(isExecutingRun({ status: "unset", lifecycle: "interrupted", source: "cli" }), false);
   assert.equal(isExecutingRun({ status: "unset", lifecycle: "interrupted", source: "cursor", execution_state: "executing" }), false);
   assert.equal(isExecutingRun({ status: "unset", lifecycle: "running", source: "cursor", execution_state: "idle" }), false);
   assert.equal(isExecutingRun({ status: "unset", lifecycle: "running", source: "cursor", execution_state: "executing" }), true);

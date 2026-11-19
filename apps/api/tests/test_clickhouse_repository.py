@@ -44,6 +44,7 @@ def _payload(
 ) -> dict[str, object]:
     body: dict[str, object] = {
         "project_id": project,
+        "attributes": {"nm5.is_fixture": True},
         "name": name,
         "started_at": started_at.isoformat(),
         "spans": [
@@ -190,10 +191,7 @@ def test_multiple_runs_survive_restart_and_later_inserts() -> None:
             ids.append(response.json()["trace_id"])
 
     with TestClient(create_app(repository())) as client:
-        listed = [
-            row
-            for row in client.get("/v1/traces", params={"project_id": project}).json()
-        ]
+        listed = [row for row in client.get("/v1/traces", params={"project_id": project}).json()]
         assert [row["name"] for row in listed] == ["run-2", "run-1", "run-0"]
         for trace_id in ids:
             assert client.get(f"/v1/traces/{trace_id}").status_code == 200
@@ -327,9 +325,7 @@ def test_clickhouse_started_before_accepts_z_and_offsets() -> None:
     eastern = cutoff.astimezone(timezone(timedelta(hours=-5)))
     names = {
         row.name
-        for row in repo.list(
-            TraceListQuery(project_id=project, started_before=eastern, limit=21)
-        )
+        for row in repo.list(TraceListQuery(project_id=project, started_before=eastern, limit=21))
     }
     assert "in-window" in names
     assert "after-window" not in names
@@ -369,14 +365,16 @@ def test_live_run_survives_api_restart_and_does_not_corrupt_batch() -> None:
         agent_id = started.json()["spans"][0]["span_id"]
         appended = client.post(
             f"/v1/runs/{trace_id}/events",
-            json=[{
-                "event_type": "span_complete",
-                "sequence": 1,
-                "span_id": agent_id,
-                "status": "ok",
-                "token_count": 4,
-                "duration_ms": 8,
-            }],
+            json=[
+                {
+                    "event_type": "span_complete",
+                    "sequence": 1,
+                    "span_id": agent_id,
+                    "status": "ok",
+                    "token_count": 4,
+                    "duration_ms": 8,
+                }
+            ],
         )
         assert appended.status_code == 200, appended.text
 
@@ -398,11 +396,13 @@ def test_live_run_survives_api_restart_and_does_not_corrupt_batch() -> None:
         assert client.get(f"/v1/traces/{trace_id}").json()["lifecycle"] == "completed"
         replay = client.post(
             f"/v1/runs/{trace_id}/events",
-            json=[{
-                "event_type": "heartbeat",
-                "sequence": 9,
-                "progress": "too-late",
-            }],
+            json=[
+                {
+                    "event_type": "heartbeat",
+                    "sequence": 9,
+                    "progress": "too-late",
+                }
+            ],
         )
         assert replay.status_code == 409
 
@@ -494,3 +494,86 @@ def test_live_usage_event_id_replay_does_not_inflate_tokens() -> None:
     assert fetched.attributes.get("nm5.estimated_cost_status") == "unavailable"
     assert fetched.attributes.get("nm5.scenario_standard_usd") is not None
 
+
+def test_batch_summary_retains_explicit_fixture_and_scenario_fields() -> None:
+    from no_more_500s_api.domain.models import TraceCreate
+
+    repo = repository()
+    trace = repo.save(
+        TraceCreate(
+            project_id=f"summary-{uuid4()}",
+            name="priced fixture",
+            started_at=datetime.now(UTC),
+            spans=[],
+            attributes={
+                "nm5.is_fixture": True,
+                "nm5.source": "cursor",
+                "nm5.scenario_standard_usd": 0.2,
+                "nm5.scenario_fast_usd": 0.4,
+            },
+        )
+    )
+    rows = list(repo.list(TraceListQuery(project_id=trace.project_id)))
+    assert len(rows) == 1 and rows[0].is_fixture
+    assert rows[0].scenario_standard_usd == 0.2
+    assert rows[0].scenario_fast_usd == 0.4
+    assert list(repo.list(TraceListQuery(project_id=trace.project_id, fixtures="exclude"))) == []
+
+
+def test_completed_turn_survives_restart_and_chat_closure() -> None:
+    project = f"turns-{uuid4()}"
+    with TestClient(create_app(repository())) as client:
+        started = client.post(
+            "/v1/runs",
+            json={
+                "project_id": project,
+                "name": "cursor-readme",
+                "agent_name": "cursor",
+                "attributes": {"nm5.source": "cursor", "agent.framework": "cursor"},
+            },
+        )
+        assert started.status_code == 201, started.text
+        trace_id = started.json()["trace_id"]
+        appended = client.post(
+            f"/v1/runs/{trace_id}/events",
+            json=[
+                {
+                    "event_type": "heartbeat",
+                    "sequence": 1,
+                    "progress": "afterAgentResponse",
+                    "attributes": {"nm5.generation_id": "g1"},
+                },
+                {
+                    "event_type": "heartbeat",
+                    "sequence": 2,
+                    "progress": "stop",
+                    "attributes": {"nm5.generation_id": "g1", "nm5.turn_status": "completed"},
+                },
+            ],
+        )
+        assert appended.status_code == 200, appended.text
+
+    with TestClient(create_app(repository())) as client:
+        rows = client.get("/v1/traces", params={"project_id": project}).json()
+        assert rows[0]["lifecycle"] == "running"
+        assert rows[0]["latest_turn_status"] == "completed"
+        assert rows[0]["turns_completed"] == 1
+        assert rows[0]["task_outcome"] == "unverified"
+        closed = client.post(
+            f"/v1/runs/{trace_id}/finalize",
+            json={
+                "status": "cancelled",
+                "sequence": 3,
+                "attributes": {"nm5.end_reason": "user_close"},
+            },
+        )
+        assert closed.status_code == 200, closed.text
+
+    with TestClient(create_app(repository())) as client:
+        rows = client.get(
+            "/v1/traces", params={"project_id": project, "activity": "completed_turns"}
+        ).json()
+        assert len(rows) == 1
+        assert rows[0]["lifecycle"] == "cancelled"
+        assert rows[0]["turns_completed"] == 1
+        assert rows[0]["turns_failed"] == 0

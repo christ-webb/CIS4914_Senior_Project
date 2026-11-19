@@ -29,6 +29,7 @@ class GenerationEstimate:
     unpriced_categories: list[str] = field(default_factory=list)
     scenario: bool = False
     variant: str | None = None
+    rates: dict[str, str | None] = field(default_factory=dict)
 
 
 def _int_attr(attributes: dict[str, Any], key: str) -> int | None:
@@ -196,6 +197,15 @@ def estimate_generation(
         unpriced_categories=unpriced,
         scenario=scenario,
         variant=variant,
+        rates={
+            "input_usd_per_million": str(input_rate),
+            "cache_read_usd_per_million": str(cache_rate) if cache_rate is not None else None,
+            "output_usd_per_million": str(output_rate),
+            "cache_write_usd_per_million": (
+                str(entry.cache_write_usd_per_million)
+                if entry.cache_write_usd_per_million is not None else None
+            ),
+        },
     )
 
 
@@ -296,4 +306,26 @@ def annotate_span_estimate(span: Span) -> Span:
         updates["nm5.unpriced_categories"] = ",".join(estimate.unpriced_categories)
     if estimate.estimate_basis:
         updates["nm5.estimate_basis"] = estimate.estimate_basis
+    # Presentation metadata only: amounts, coverage and verification remain unchanged.
+    candidates = {"verified": estimate}
+    if "unknown_model_variant" in estimate.reasons:
+        candidates = {
+            variant: estimate_generation(span, variant_override=variant, scenario=True)
+            for variant in ("standard", "fast")
+        }
+    details = {}
+    for name, item in candidates.items():
+        if item.amount is None:
+            continue
+        details[name] = {
+            "amount_usd": str(item.amount),
+            "status": item.status,
+            "rates": item.rates,
+            "source": item.source_url,
+            "verified_date": item.verified_date,
+            "unpriced_categories": item.unpriced_categories,
+            "reasons": item.reasons,
+        }
+    if details:
+        updates["nm5.pricing_details"] = details
     return span.model_copy(update={"attributes": updates})

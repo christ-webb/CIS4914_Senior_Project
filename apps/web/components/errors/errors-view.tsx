@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
-import { EmptyState, LiveStatus, PageHeader } from "@/components/shell/page-header";
+import { ArrowIcon, EmptyState, LiveStatus, PageHeader, SectionHead } from "@/components/shell/page-header";
+import { Disclosure } from "@/components/ui/disclosure";
 import { usePolling } from "@/hooks/use-polling";
 import { fetchDiagnosticSummary } from "@/lib/api";
 import { sortFindings } from "@/lib/diagnostics";
@@ -35,31 +36,29 @@ export function ErrorsView() {
   return (
     <>
       <PageHeader
-        eyebrow="ERRORS"
-        title="What's breaking, and where"
-        subtitle={
-          summary
-            ? `${summary.analysis_scope.analyzed_run_count} recent runs analyzed. ${summary.analysis_scope.note}`
-            : "Loading diagnostic summary…"
-        }
-        actions={<LiveStatus online={online} updatedAt={updatedAt} onRefresh={refresh} />}
+        title="Errors"
+        actions={<>
+          {summary && <Disclosure label={`${summary.analysis_scope.analyzed_run_count} recent runs`}><p>Diagnostics analyze a bounded window of the most recent runs, not all history.</p><p>{summary.analysis_scope.note}</p></Disclosure>}
+          <LiveStatus online={online} updatedAt={updatedAt} onRefresh={refresh} />
+        </>}
       />
 
       {summary && <SummaryStats summary={summary} />}
 
       {!loading && !summary ? (
         <EmptyState online={online} />
-      ) : shown.length === 0 && !loading ? (
+      ) : findings.length === 0 && !loading ? (
         <section className="empty-state">
-          <h2>No diagnostic findings in this window</h2>
-          <p>The bounded recent-run analysis did not detect critical or warning findings.</p>
+          <span className="empty-mark" aria-hidden="true" />
+          <h2>No findings</h2>
+          <p>Nothing detected in the recent-run window.</p>
         </section>
       ) : (
         <section className="explorer">
-          <aside className="card run-list" aria-label="Diagnostic findings">
-            <h3>Findings</h3>
+          <aside className="run-list" aria-label="Diagnostic findings">
+            <SectionHead title="Findings" count={`${shown.length} shown`} />
             <input className="search" type="search" placeholder="Search findings…" aria-label="Search findings" value={query} onChange={(event) => setQuery(event.target.value)} />
-            <div className="toolbar-actions" style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+            <div className="filter-pair">
               <select className="search" value={severity} onChange={(event) => setSeverity(event.target.value as typeof severity)} aria-label="Filter severity">
                 <option value="all">All severities</option>
                 <option value="critical">Critical</option>
@@ -85,7 +84,7 @@ export function ErrorsView() {
               ))}
             </div>
           </aside>
-          <div className="card trace-panel">{active ? <FindingOverview finding={active} /> : <p className="muted">Select a finding.</p>}</div>
+          <div className="trace-panel">{active ? <FindingOverview finding={active} /> : <p className="muted">Select a finding.</p>}</div>
         </section>
       )}
     </>
@@ -95,16 +94,14 @@ export function ErrorsView() {
 function SummaryStats({ summary }: { summary: DiagnosticSummary }) {
   const types = Object.entries(summary.totals_by_type).sort((a, b) => b[1] - a[1]);
   return (
-    <section className="kpis" aria-label="Diagnostic summary">
-      <article className="card kpi"><div><span className="kpi-label">Findings (window)</span><strong>{Object.values(summary.totals_by_severity).reduce((a, b) => a + b, 0)}</strong></div></article>
-      <article className="card kpi"><div><span className="kpi-label">Critical</span><strong>{summary.totals_by_severity.critical ?? 0}</strong></div></article>
-      <article className="card kpi"><div><span className="kpi-label">Warning</span><strong>{summary.totals_by_severity.warning ?? 0}</strong></div></article>
-      <article className="card kpi"><div><span className="kpi-label">Affected runs</span><strong>{summary.affected_trace_count}</strong></div></article>
-      <article className="card kpi">
-        <div>
-          <span className="kpi-label">Most common types</span>
-          <small className="muted">{types.length ? types.map(([name, count]) => `${name} (${count})`).join(" · ") : "None"}</small>
-        </div>
+    <section className="metric-band" aria-label="Diagnostic summary">
+      <article className="metric feature"><span className="kpi-label">Findings</span><strong className="metric-value">{Object.values(summary.totals_by_severity).reduce((a, b) => a + b, 0)}</strong><small className="metric-detail">Recent window</small></article>
+      <article className="metric"><span className="kpi-label">Critical</span><strong className={`metric-value${(summary.totals_by_severity.critical ?? 0) > 0 ? " bad-text" : ""}`}>{summary.totals_by_severity.critical ?? 0}</strong></article>
+      <article className="metric"><span className="kpi-label">Warning</span><strong className={`metric-value${(summary.totals_by_severity.warning ?? 0) > 0 ? " warn-text" : ""}`}>{summary.totals_by_severity.warning ?? 0}</strong></article>
+      <article className="metric surface"><span className="kpi-label">Affected runs</span><strong className="metric-value">{summary.affected_trace_count}</strong></article>
+      <article className="metric">
+        <span className="kpi-label">Top types</span>
+        <small className="metric-detail">{types.length ? types.slice(0, 3).map(([name, count]) => `${name.replaceAll("_", " ")} (${count})`).join(" · ") : "None"}</small>
       </article>
     </section>
   );
@@ -113,7 +110,7 @@ function SummaryStats({ summary }: { summary: DiagnosticSummary }) {
 function FindingOverview({ finding }: { finding: DiagnosticFinding }) {
   return (
     <div className="error-detail">
-      <p className="eyebrow">{finding.detection_type.replaceAll("_", " ").toUpperCase()}</p>
+      <p className="kicker">{finding.detection_type.replaceAll("_", " ")}</p>
       <h2>{finding.title}</h2>
       <p>
         <span className={`pill ${finding.severity}`}>{finding.severity}</span>{" "}
@@ -121,13 +118,12 @@ function FindingOverview({ finding }: { finding: DiagnosticFinding }) {
         {finding.provisional && <span className="pill interrupted">provisional</span>}
       </p>
       <p className="error-message">{finding.explanation}</p>
-      <h4>Evidence</h4>
-      <ul>{finding.evidence.map((line) => <li key={line}>{line}</li>)}</ul>
+      <details><summary>Supporting evidence ({finding.evidence.length})</summary><ul>{finding.evidence.map((line) => <li key={line}>{line}</li>)}</ul><p className="muted">{finding.confidence} evidence · {finding.detection_type.replaceAll("_", " ")}</p></details>
       <h4>Suggested investigation</h4>
       <p>{finding.suggested_action}</p>
       <p>
-        <Link className="row-link" href={`/traces/${finding.trace_id}?finding=${finding.finding_id}`}>
-          Open execution trace →
+        <Link className="btn btn-accent" href={`/traces/${finding.trace_id}?finding=${finding.finding_id}`}>
+          Open trace <ArrowIcon />
         </Link>
       </p>
     </div>

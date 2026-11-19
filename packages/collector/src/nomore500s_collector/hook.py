@@ -10,6 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from nomore500s_collector.creation_evidence import stamp
+
 HOOK_OK = b"{}\n"
 MAX_HOOK_LOG_BYTES = 256 * 1024
 
@@ -61,12 +63,33 @@ def append_hook_debug(message: str) -> None:
         return
 
 
+def _parse_collector_result(body: bytes) -> tuple[str | None, str | None]:
+    try:
+        parsed = json.loads(body.decode("utf-8") or "null")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(parsed, dict):
+        return None, None
+    status = parsed.get("status")
+    reason = parsed.get("reason")
+    return (str(status) if status else None, str(reason) if reason else None)
+
+
+def _read_http_error_body(error: HTTPError) -> bytes:
+    try:
+        return error.read()
+    except OSError:
+        return b""
+
+
 def _sanitized_delivery(
     payload: dict[str, Any],
     *,
     source: str | None,
     status: str,
     http_status: int | None = None,
+    result: str | None = None,
+    reason: str | None = None,
 ) -> str:
     event = str(payload.get("hook_event_name") or payload.get("hookEventName") or "unknown")
     has_session = bool(
@@ -87,6 +110,10 @@ def _sanitized_delivery(
         parts.append(f"source={source}")
     if http_status is not None:
         parts.append(f"http_status={http_status}")
+    if result:
+        parts.append(f"result={result}")
+    if reason:
+        parts.append(f"reason={reason}")
     return " ".join(parts)
 
 
@@ -110,34 +137,47 @@ def post_hook(payload: dict[str, Any], delivery_id: str, *, source: str | None =
         try:
             with urlopen(request, timeout=1.5) as response:
                 http_status = getattr(response, "status", 200)
-                response.read()
+                result, reason = _parse_collector_result(response.read())
             append_hook_debug(
                 _sanitized_delivery(
-                    payload, source=source, status="delivered", http_status=http_status
+                    payload,
+                    source=source,
+                    status="delivered",
+                    http_status=http_status,
+                    result=result,
+                    reason=reason,
                 )
             )
             return "delivered"
         except (HTTPError, URLError, TimeoutError, OSError) as error:
             last_error = error
-            if isinstance(error, HTTPError) and error.code in {400, 401, 413, 422}:
+            if isinstance(error, HTTPError) and error.code in {400, 401, 409, 413, 422}:
+                result, reason = _parse_collector_result(_read_http_error_body(error))
                 append_hook_debug(
                     _sanitized_delivery(
                         payload,
                         source=source,
                         status=type(error).__name__,
                         http_status=error.code,
+                        result=result,
+                        reason=reason,
                     )
                 )
                 return f"http_{error.code}"
             _ = attempt
     if last_error is not None:
         http_status = last_error.code if isinstance(last_error, HTTPError) else None
+        result = reason = None
+        if isinstance(last_error, HTTPError):
+            result, reason = _parse_collector_result(_read_http_error_body(last_error))
         append_hook_debug(
             _sanitized_delivery(
                 payload,
                 source=source,
                 status=type(last_error).__name__,
                 http_status=http_status,
+                result=result,
+                reason=reason,
             )
         )
         return type(last_error).__name__
@@ -156,6 +196,7 @@ def run_hook(stdin: str | None = None, *, source: str | None = None) -> int:
         append_hook_debug("python_hook event=non_object status=ignored")
         sys.stdout.buffer.write(HOOK_OK)
         return 0
+    stamp(payload, source)
     delivery_id = str(uuid.uuid4())
     try:
         post_hook(payload, delivery_id, source=source)

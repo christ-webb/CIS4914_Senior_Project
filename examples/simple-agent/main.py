@@ -19,6 +19,7 @@ def main() -> None:
     )
     with client.start_run(
         project_id="simple-agent",
+        attributes={"nm5.is_fixture": True},
         name="research request",
         agent_name="research-agent",
         agent_input={"query": "agent observability"},

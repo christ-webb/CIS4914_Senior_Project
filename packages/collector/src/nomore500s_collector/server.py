@@ -13,6 +13,8 @@ from fastapi.responses import JSONResponse
 
 from nomore500s_collector.api_client import LiveRunClient
 from nomore500s_collector.auth import load_or_create_token
+from nomore500s_collector.creation_evidence import EVIDENCE_MODES
+from nomore500s_collector.history_guard import acquire_lock, runtime_lock
 from nomore500s_collector.normalize import normalize_hook_payload
 from nomore500s_collector.otlp import decode_otlp
 from nomore500s_collector.pipeline import OverflowError, Pipeline
@@ -25,6 +27,13 @@ logger = logging.getLogger("nomore500s.collector")
 class CollectorApp:
     def __init__(self, settings: CollectorSettings | None = None) -> None:
         self.settings = settings or CollectorSettings()
+        self.settings.home().mkdir(parents=True, exist_ok=True)
+        self._history_lock = runtime_lock(
+            store=self.settings.db_path(), api_url=self.settings.api_url
+        )
+        self._store_lock = acquire_lock(
+            self.settings.db_path().with_suffix(".sqlite.runtime.lock"), exclusive=True
+        )
         self.token = load_or_create_token(self.settings.home(), self.settings.collector_token)
         self.store = CollectorStore(self.settings.db_path(), max_pending=self.settings.max_pending)
         self.pipeline = Pipeline(
@@ -46,7 +55,7 @@ class CollectorApp:
     def stop_worker(self) -> None:
         self._stop.set()
         if self._worker is not None:
-            self._worker.join(timeout=2)
+            self._worker.join()
             self._worker = None
 
     def _loop(self) -> None:
@@ -59,6 +68,9 @@ class CollectorApp:
     def close(self) -> None:
         self.stop_worker()
         self.store.close()
+        self._store_lock.close()
+        if self._history_lock is not None:
+            self._history_lock.close()
 
 
 def _authorized(runtime: CollectorApp, authorization: str | None) -> bool:
@@ -89,6 +101,9 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
         return {
             "status": "ok",
             "pending": app_runtime.store.pending_count(),
+            "history_generation": int(app_runtime.store._meta("history_generation") or "0"),
+            "requires_session_creation_evidence": bool(app_runtime.store._meta("history_boundary")),
+            "creation_evidence_modes": list(EVIDENCE_MODES),
             "last_flush_error": app_runtime.pipeline.last_flush_error,
             "otlp": True,
             "token_configured": bool(app_runtime.token),
@@ -125,12 +140,12 @@ def create_app(runtime: CollectorApp | None = None) -> FastAPI:
         if not delivery_id:
             raise HTTPException(status_code=422, detail="X-NM5-Delivery-Id is required")
         try:
-            result = app_runtime.pipeline.ingest(
-                normalized, delivery_id, source=x_nm5_source
-            )
+            result = app_runtime.pipeline.ingest(normalized, delivery_id, source=x_nm5_source)
         except OverflowError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
-        return JSONResponse(result, status_code=202)
+        return JSONResponse(
+            result, status_code=409 if result.get("status") == "rejected_reset_boundary" else 202
+        )
 
     async def ingest_otlp(
         request: Request,

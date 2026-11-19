@@ -59,8 +59,8 @@ registered, so Cursor keeps its own allow/deny flow. Tool spans come from
 | `postToolUse` | Tool span completion |
 | `postToolUseFailure` | Tool error; user interrupt is not a model failure |
 | `subagentStop` | Nested agent span completion |
-| `stop` | Turn heartbeat (not session end); optional parent-agent token fields |
-| `afterAgentResponse` | Turn completion heartbeat; optional parent-agent token fields |
+| `stop` | Authoritative end of the agent turn (not session end); optional parent-agent token fields |
+| `afterAgentResponse` | Provisional response observed; optional parent-agent token fields |
 | `afterAgentThought` | Executing heartbeat for the current generation; response text is redacted |
 | `preCompact` | Context-window occupancy, never billable token usage |
 | `sessionEnd` | Finalize |
@@ -74,6 +74,30 @@ registered, so Cursor keeps its own allow/deny flow. Tool spans come from
 | `aborted`, `user_close`, `window_close` | `cancelled` | cancelled |
 
 Cancelled runs keep trace `status=unset` so they do not count as successful.
+A cancelled or closed session does not change turns that already completed.
+
+## Turn evidence
+
+Each user message starts a new `generation_id`, which identifies the turn.
+
+| Evidence | Turn status | Provenance |
+| --- | --- | --- |
+| `beforeSubmitPrompt`, `afterAgentThought`, tool activity with the generation id | `executing` | observed |
+| `afterAgentResponse` | `response_observed` | provisional. It fires after every assistant message, including intermediate ones, so it never completes a turn. |
+| `stop` `status=completed` | `completed` | observed (`cursor.stop`) |
+| `stop` `status=aborted` | `interrupted` | observed |
+| `stop` `status=error` | `failed` | observed |
+| `sessionEnd` while a turn is executing | `interrupted` | inferred (`session.finalize`) |
+
+`afterAgentThought` carries step ids such as `<generation>-12-5l8b`. They
+belong to the generation's turn. A turn that only reached `afterAgentResponse`
+stays provisional and is excluded from the turn completion rate.
+
+Example: you ask for a README edit, the agent finishes, and the chat stays
+open. Execution is **Idle**, the latest turn is **Completed**, the session is
+**Open**, and the task is **Unverified**. The turn counts toward turn
+completion. After you close the chat, the session is **Cancelled** and the
+turn stays **Completed**.
 
 ## Coverage
 
@@ -101,15 +125,27 @@ accounts. Dashboard CSV exports cannot be joined without a conversation id.
 
 ## Diagnostics
 
-Diagnostics are off by default. Set `NM5_HOOK_DEBUG=1` to append a bounded log
-at `~/.nomore500s/collector/hook.log` (or `$NM5_COLLECTOR_HOME/hook.log`).
+Diagnostics are off by default. Set `NM5_HOOK_DEBUG=1`, or reinstall with
+`uv run nm5-cursor-install-hooks --debug`, to append a bounded log at
+`~/.nomore500s/collector/hook.log` (or `$NM5_COLLECTOR_HOME/hook.log`).
 
 - Wrapper lines record invocation and whether the Python interpreter launched.
 - Python lines record sanitized event name, session-id presence, delivery
-  status, and collector host.
+  status, collector host, HTTP status, collector `result=`, and `reason=`
+  (including HTTP 409 reset-boundary rejections).
 
-The log never includes tokens, prompts, tool inputs, tool outputs, or workspace
-paths, and it is truncated at 256 KiB.
+The log never includes tokens, prompts, tool inputs, tool outputs, session
+identifiers, or workspace paths, and it is truncated at 256 KiB.
+
+### After a local history reset
+
+Cursor does not send `session_created_at`. The observe-only hook stamps
+`_nm5_creation_observed_at` on `sessionStart` only. A **new** Composer
+conversation created after the reset is admitted; continuation events in that
+conversation then flow normally. A conversation that existed before the reset
+is rejected (`reason=denied_identity` or `not_session_start`) even if it emits
+another `sessionStart`. Start a brand-new chat to resume collection. See
+[local-history.md](../local-history.md).
 
 ## Remote and cloud
 
@@ -129,9 +165,10 @@ your local collector. Those environments are **unsupported** in this milestone.
 4. Confirm collector logs show `POST /v1/collector/events` and
    `cursor hook event=... fields=...` for `stop` / `afterAgentResponse` /
    `preCompact`. `fields=` lists present allowlisted keys only, never values.
-5. While the agent is working, the run is in **Active runs**. After the turn
-   finishes, it moves to **Idle / Open** with lifecycle `running` and
-   execution `idle`, not interrupted + live.
+5. While the agent is working, the run is in **Active runs**. After `stop`,
+   it moves to **Idle / Open** with lifecycle `running`, execution `idle`, and
+   latest turn **Turn completed**. It also appears under **Recently
+   completed → Turns**.
 6. Tokens stay **Not reported** unless those logs include `input_tokens` or
    `output_tokens`. Cost stays **Not reported**.
 7. Closing the Composer tab should emit `sessionEnd` and finalize the run.

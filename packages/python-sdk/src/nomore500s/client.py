@@ -273,18 +273,34 @@ class LiveRun:
         self,
         status: Literal["completed", "failed", "cancelled"] = "completed",
         error: dict[str, Any] | None = None,
+        *,
+        task_outcome: Literal["success", "failure"] | None = None,
+        task_verification: Literal["passed", "failed"] | None = None,
+        task_verifier: str | None = None,
     ) -> None:
+        """Finalize the run.
+
+        ``task_outcome`` is the agent's own report. ``task_verification`` is an
+        independent check (tests, evaluator) and requires ``task_verifier``.
+        """
         if self._closed:
             return
         self._closed = True
         self._stop.set()
         event_id = uuid4()
+        attributes: dict[str, Any] = {}
+        if task_outcome:
+            attributes["nm5.task_outcome"] = task_outcome
+        if task_verification:
+            attributes["nm5.task_verification"] = task_verification
+            attributes["nm5.task_verifier"] = task_verifier or "verifier"
         payload = {
             "event_id": str(event_id),
             "sequence": self._next_sequence(),
             "occurred_at": _now().isoformat(),
             "status": status,
             "error": error,
+            "attributes": attributes,
         }
         self._enqueue(
             _Pending(

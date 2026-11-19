@@ -193,3 +193,40 @@ def test_precompact_is_context_not_usage() -> None:
     assert plan.token_status is None
     assert "context_tokens" in attrs["nm5.hook_fields"].split(",")
     assert "input_tokens" not in attrs["nm5.hook_fields"].split(",")
+
+
+def test_stop_is_authoritative_and_response_is_provisional() -> None:
+    adapter = CursorAdapter()
+    stop = adapter.plan(
+        {
+            "hook_event_name": "stop",
+            "conversation_id": "c",
+            "generation_id": "g1",
+            "status": "aborted",
+        },
+        delivery_id="s",
+    )
+    attrs = stop.events[0].payload["attributes"]
+    assert attrs["nm5.turn_status"] == "aborted"
+    assert attrs["nm5.turn_evidence"] == "cursor.stop"
+    assert stop.events[0].critical is True
+    response = adapter.plan(
+        {"hook_event_name": "afterAgentResponse", "conversation_id": "c", "generation_id": "g1"},
+        delivery_id="r",
+    )
+    attrs = response.events[0].payload["attributes"]
+    assert attrs["nm5.turn_evidence"] == "cursor.afterAgentResponse:provisional"
+
+
+def test_tool_spans_carry_generation_identity() -> None:
+    plan = CursorAdapter().plan(
+        {
+            "hook_event_name": "postToolUse",
+            "conversation_id": "c",
+            "generation_id": "g7",
+            "tool_use_id": "t",
+            "tool_name": "Read",
+        },
+        delivery_id="t",
+    )
+    assert plan.events[0].payload["attributes"]["nm5.generation_id"] == "g7"

@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { TraceMetrics } from "./trace-metrics";
+import { Disclosure } from "@/components/ui/disclosure";
+import { costPresentation, spanTiming } from "@/lib/presentation";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { ExecutionGraphCanvas } from "@/components/traces/execution-graph-canvas";
 import { useVisibleGraph } from "@/hooks/use-visible-graph";
@@ -8,17 +11,13 @@ import { findingsForSpan } from "@/lib/diagnostics";
 import { groupsToExpandForFinding, type GraphMode, type SpanGroup } from "@/lib/execution-graph";
 import { computeTimeline } from "@/lib/layout";
 import {
-  formatBilledCostLabel,
   formatCostLabel,
-  formatEstimatedCostLabel,
   formatMs,
   formatTokenLabel,
   spanUsageStatus,
 } from "@/lib/stats";
+import { sessionLabel, TASK_OUTCOME_LABELS, turnLabel, turnSummary } from "@/lib/outcomes";
 import {
-  executionState,
-  isExecutingRun,
-  traceLifecycle,
   type DiagnosticFinding,
   type Span,
   type Trace,
@@ -77,10 +76,8 @@ export function TraceView({
   const timeline = useMemo(() => computeTimeline(trace.spans), [trace.spans]);
   const activeSpan = trace.spans.find((span) => span.span_id === activeId) ?? null;
   const activeGroup = graph.groups.find((group) => group.id === activeId) ?? null;
-  const errors = trace.spans.filter((span) => span.status === "error").length;
-  const lifecycle = traceLifecycle(trace);
-  const execution = executionState(trace);
-  const live = isExecutingRun(trace);
+  const turns = turnSummary(trace);
+  const turnDetails = Array.isArray(trace.attributes?.["nm5.turns"]) ? (trace.attributes["nm5.turns"] as TurnDetail[]) : [];
   const tokenStatus =
     typeof trace.attributes?.["nm5.token_status"] === "string"
       ? String(trace.attributes["nm5.token_status"])
@@ -89,163 +86,27 @@ export function TraceView({
     typeof trace.attributes?.["nm5.cost_status"] === "string"
       ? String(trace.attributes["nm5.cost_status"])
       : trace.cost_status;
-  const usageScope =
-    typeof trace.attributes?.["nm5.usage_scope"] === "string"
-      ? String(trace.attributes["nm5.usage_scope"])
-      : trace.usage_scope;
-  const contextTokens = trace.attributes?.["nm5.context_tokens"];
-  const contextWindow = trace.attributes?.["nm5.context_window_size"];
-  const inputTokens = numberAttr(trace.attributes, "nm5.usage.input_tokens");
-  const outputTokens = numberAttr(trace.attributes, "nm5.usage.output_tokens");
-  const cacheRead = numberAttr(trace.attributes, "nm5.usage.cache_read_tokens");
-  const cacheWrite = numberAttr(trace.attributes, "nm5.usage.cache_write_tokens");
-  const estimatedStatus =
-    typeof trace.attributes?.["nm5.estimated_cost_status"] === "string"
-      ? String(trace.attributes["nm5.estimated_cost_status"])
-      : trace.estimated_cost_status;
-  const estimatedUsd = numberAttr(trace.attributes, "nm5.estimated_cost_usd") ?? trace.estimated_cost_usd;
-  const subtotalUsd = numberAttr(trace.attributes, "nm5.estimated_subtotal_usd") ?? trace.estimated_subtotal_usd;
-  const scenarioStandard = numberAttr(trace.attributes, "nm5.scenario_standard_usd") ?? trace.scenario_standard_usd;
-  const scenarioFast = numberAttr(trace.attributes, "nm5.scenario_fast_usd") ?? trace.scenario_fast_usd;
-  const covered = numberAttr(trace.attributes, "nm5.estimate_covered_generations") ?? trace.covered_generations;
-  const totalGens = numberAttr(trace.attributes, "nm5.estimate_total_generations") ?? trace.total_generations;
-  const modelId =
-    typeof trace.attributes?.["nm5.model_id"] === "string"
-      ? String(trace.attributes["nm5.model_id"])
-      : trace.model;
-  const modelVariant =
-    typeof trace.attributes?.["nm5.model_variant"] === "string"
-      ? String(trace.attributes["nm5.model_variant"])
-      : trace.model_variant;
-  const pricingSource =
-    typeof trace.attributes?.["nm5.pricing_source"] === "string"
-      ? String(trace.attributes["nm5.pricing_source"])
-      : null;
-  const pricingVerified =
-    typeof trace.attributes?.["nm5.pricing_verified_date"] === "string"
-      ? String(trace.attributes["nm5.pricing_verified_date"])
-      : null;
-  const estimateBasis =
-    typeof trace.attributes?.["nm5.estimate_basis"] === "string"
-      ? String(trace.attributes["nm5.estimate_basis"])
-      : trace.estimate_basis;
-  const registryVersion =
-    typeof trace.attributes?.["nm5.pricing_registry_version"] === "string"
-      ? String(trace.attributes["nm5.pricing_registry_version"])
-      : null;
 
   return (
     <div className="trace-view">
-      <div className="trace-heading">
-        <div>
-          <p className="muted">
-            <span className={`pill ${lifecycle}`}>{lifecycle}</span>{" "}
-            <span className={`pill ${execution}`}>{execution}</span>{" "}
-            <span className={`pill ${trace.status}`}>{trace.status}</span>{" "}
-            {typeof trace.attributes?.["nm5.source"] === "string" && (
-              <span className="pill">{String(trace.attributes["nm5.source"])}</span>
-            )}{" "}
-            {typeof trace.attributes?.["gen_ai.provider"] === "string" && (
-              <span className="pill">{String(trace.attributes["gen_ai.provider"])}</span>
-            )}{" "}
-            {typeof trace.attributes?.["agent.framework"] === "string" && (
-              <span className="pill">{String(trace.attributes["agent.framework"])}</span>
-            )}{" "}
-            {new Date(trace.started_at).toLocaleString()}
-            {trace.ended_at ? ` → ${new Date(trace.ended_at).toLocaleString()}` : ""}
-            {" · "}
-            {trace.spans.length} spans
-            {errors > 0 && ` · ${errors} failed`}
-            {live && " · live"}
-          </p>
-            {typeof trace.attributes?.["nm5.instrumentation"] === "string" && (
-            <p className="muted">Method: {String(trace.attributes["nm5.instrumentation"])}</p>
-          )}
-          {typeof trace.attributes?.["nm5.coverage"] === "string" && (
-            <p className="muted">Instrumentation: {String(trace.attributes["nm5.coverage"])}</p>
-          )}
-          {typeof trace.attributes?.["nm5.outcome"] === "string" && (
-            <p className="muted">Outcome: {String(trace.attributes["nm5.outcome"])}</p>
-          )}
-          {typeof trace.attributes?.["nm5.turn_status"] === "string" && (
-            <p className="muted">Last turn: {String(trace.attributes["nm5.turn_status"])}</p>
-          )}
-          {usageScope === "parent_agent" && tokenStatus === "reported" && (
-            <p className="muted">Usage coverage: Parent agent only. Subagent tokens were not reported.</p>
-          )}
-          {modelId && (
-            <p className="muted">
-              Model: {modelId}
-              {modelVariant ? ` · ${modelVariant}` : " · variant not verified"}
-            </p>
-          )}
-          {typeof trace.attributes?.["nm5.workspace"] === "string" && (
-            <p className="muted">Workspace: {String(trace.attributes["nm5.workspace"])}</p>
-          )}
+      <div className="trace-identity">
+        <h2 className="trace-name" title={trace.name}>{trace.name}</h2>
+        <div className="trace-context">
+          <span className={`pill ${slug(sessionLabel(trace))}`} title="Session lifecycle">{sessionLabel(trace)}</span>
+          <span className={`pill ${slug(turnLabel(trace))}`} title="Latest agent turn">{turnLabel(trace)}</span>
+          <span className={`pill task ${turns.taskOutcome}`} title="Task outcome">Task · {TASK_OUTCOME_LABELS[turns.taskOutcome]}</span>
+          <span className="muted">{trace.project_id} · {new Date(trace.started_at).toLocaleString()} · {trace.spans.length} operations · <span className="mono" title={trace.trace_id}>{trace.trace_id.slice(0, 8)}</span></span>
+          <Disclosure label={`Turns · ${turns.completed}/${turns.total} completed`}>
+            <p>Agent turn status is separate from the session lifecycle. Closing a conversation never rewrites a completed turn. Task outcome stays unverified unless an explicit report or independent verification is recorded{turns.taskOutcomeSource ? ` (source: ${turns.taskOutcomeSource})` : ""}.</p>
+            {turnDetails.length ? <dl className="detail-list">{turnDetails.map((turn, index) => <div key={turn.turn_key}><dt>Turn {index + 1}</dt><dd>{turn.status.replaceAll("_", " ")} · {turn.evidence} · {turn.provenance}</dd></div>)}</dl> : <p>{turns.latestEvidence ? `Evidence: ${turns.latestEvidence}.` : "No turn evidence recorded."}</p>}
+          </Disclosure>
+          <Disclosure label="Run details"><dl className="detail-list"><div><dt>Trace ID</dt><dd>{trace.trace_id}</dd></div><div><dt>Project</dt><dd>{trace.project_id}</dd></div></dl><pre>{JSON.stringify(trace.attributes, null, 2)}</pre></Disclosure>
         </div>
-        <dl className="mini-stats">
-          <div><dt>Duration</dt><dd>{formatMs(trace.duration_ms)}</dd></div>
-          <div>
-            <dt>Tokens</dt>
-            <dd>{formatTokenLabel(trace.total_tokens, tokenStatus)}</dd>
-          </div>
-          <div>
-            <dt>Actual billed cost</dt>
-            <dd className="billed-cost">{formatBilledCostLabel(trace.total_cost_usd, costStatus)}</dd>
-          </div>
-          <div>
-            <dt>Estimated model cost</dt>
-            <dd className="estimated-cost">{formatEstimatedCostLabel(estimatedUsd, estimatedStatus)}</dd>
-          </div>
-          {typeof contextTokens === "number" && typeof contextWindow === "number" && (
-            <div>
-              <dt>Context window</dt>
-              <dd>{contextTokens.toLocaleString()} / {contextWindow.toLocaleString()}</dd>
-            </div>
-          )}
-        </dl>
       </div>
-      {(inputTokens != null || outputTokens != null || cacheRead != null) && (
-        <section className="token-breakdown" aria-label="Token breakdown">
-          <h3>Token breakdown</h3>
-          <dl className="mini-stats">
-            <div><dt>Cumulative consumed</dt><dd>{formatTokenLabel(trace.total_tokens, tokenStatus)}</dd></div>
-            {inputTokens != null && <div><dt>Input</dt><dd>{inputTokens.toLocaleString()}</dd></div>}
-            {outputTokens != null && <div><dt>Output</dt><dd>{outputTokens.toLocaleString()}</dd></div>}
-            {cacheRead != null && <div><dt>Cache read</dt><dd>{cacheRead.toLocaleString()}</dd></div>}
-            {cacheWrite != null && <div><dt>Cache write</dt><dd>{cacheWrite.toLocaleString()}</dd></div>}
-            {typeof contextTokens === "number" && (
-              <div>
-                <dt>Current context occupancy</dt>
-                <dd>
-                  {contextTokens.toLocaleString()}
-                  {typeof contextWindow === "number" ? ` / ${contextWindow.toLocaleString()}` : ""}
-                </dd>
-              </div>
-            )}
-          </dl>
-          {subtotalUsd != null && estimatedStatus !== "complete" && (
-            <p className="muted">Qualified estimated subtotal: {formatCost(subtotalUsd)} covering {covered ?? 0}/{totalGens ?? 0} generations. Full-run estimated cost is unavailable.</p>
-          )}
-          {scenarioStandard != null && scenarioFast != null && (
-            <p className="muted">
-              Standard vs Fast scenario range (not the actual run estimate): {formatCost(scenarioStandard)} – {formatCost(scenarioFast)}
-            </p>
-          )}
-          <p className="muted">
-            Estimated model cost uses published list rates
-            {pricingSource ? ` (${pricingSource}` : ""}
-            {pricingVerified ? `, verified ${pricingVerified}` : ""}
-            {pricingSource ? ")" : ""}
-            {estimateBasis === "current_rate" ? "; current-rate re-estimate" : ""}
-            {registryVersion ? `; registry ${registryVersion}` : ""}.
-            It may differ from the amount charged by a subscription provider. Credits and discounts
-            are not applied.
-          </p>
-        </section>
-      )}
+      <TraceMetrics trace={trace} onFailure={() => { setTab("graph"); setMode("failure"); setFitNodeIds(null); setFitNonce(v => v + 1); }} />
+      {findings.length > 0 && <div className="findings-summary"><a href="#diagnostic-evidence">{findings.length} diagnostic findings · View evidence</a><button className="text-button" onClick={() => { setTab("graph"); setMode("failure"); setFitNodeIds(null); setFitNonce(v => v + 1); }}>Failure focus</button></div>}
 
-      <div className="tabs" role="tablist">
+      <div className="tabs" role="tablist" onKeyDown={navigateTabs}>
         {(Object.keys(TAB_LABELS) as Tab[]).map((value) => (
           <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "tab active" : "tab"} onClick={() => setTab(value)}>
             {TAB_LABELS[value]}
@@ -254,7 +115,7 @@ export function TraceView({
       </div>
       {tab === "graph" && (
         <div className="graph-toolbar">
-          <div className="tabs nested" role="tablist" aria-label="Graph view mode">
+          <div className="tabs nested" role="tablist" onKeyDown={navigateTabs} aria-label="Graph view mode">
             {GRAPH_MODES.map((item) => (
               <button
                 key={item.id}
@@ -273,14 +134,14 @@ export function TraceView({
               </button>
             ))}
           </div>
-          <p className="graph-legend muted">
-            Solid arrows are verified parent-child links. Dashed arrows are observed chronological order, not causality.
-            Groups sum member durations and do not represent wall-clock elapsed time.
-          </p>
+          <div className="graph-legend muted">
+            Solid: parent–child · Dashed: observed order
+            <Disclosure label="Graph relationships"><p>Solid arrows are verified parent-child links. Dashed arrows show observed chronological order, not causality. Groups sum recorded member durations, not wall-clock elapsed time; missing timing is not a zero-duration measurement.</p></Disclosure>
+          </div>
         </div>
       )}
 
-      <div className="view-body">
+      <div className={`view-body${activeSpan || activeGroup ? " has-inspector" : ""}`}>
         <div className="view-main">
           {tab === "graph" ? (
             <ExecutionGraphCanvas
@@ -303,9 +164,9 @@ export function TraceView({
                 <tbody>
                   {trace.spans.map((span) => (
                     <tr key={span.span_id} className={`clickable${span.span_id === activeId ? " selected" : ""}`} onClick={() => setActiveId(span.span_id)}>
-                      <td><span className={`type-pill t-${span.type}`}>{span.type}</span> {span.name}</td>
+                      <td><button className="text-button" onClick={() => setActiveId(span.span_id)}><span className={`type-pill t-${span.type}`}>{span.type}</span> {span.name}</button></td>
                       <td><span className={`pill ${span.status}`}>{span.status}</span></td>
-                      <td className="num">{formatMs(span.duration_ms)}</td>
+                      <td className="num">{spanTiming(span).label}</td>
                       <td className="num">{formatTokenLabel(span.token_count, spanUsageStatus(span, "token", tokenStatus))}</td>
                       <td className="num estimated-cost">{spanEstimateLabel(span)}</td>
                       <td className="num billed-cost">{formatCostLabel(span.cost_usd, spanUsageStatus(span, "cost", costStatus))}</td>
@@ -331,13 +192,13 @@ export function TraceView({
                       style={{ left: `${offsetPct}%`, width: `${Math.min(widthPct, 100 - offsetPct)}%` }}
                     />
                   </span>
-                  <span className="tl-dur muted">{formatMs(span.duration_ms)}</span>
+                  <span className="tl-dur muted">{spanTiming(span).label}</span>
                 </button>
               ))}
             </div>
           )}
         </div>
-        <aside className="span-detail" aria-label="Span details">
+        {(activeSpan || activeGroup) && <aside className="span-detail" aria-label="Span details">
           {activeSpan ? (
             <SpanDetail span={activeSpan} findings={findingsForSpan(findings, activeSpan.span_id)} />
           ) : activeGroup ? (
@@ -350,7 +211,7 @@ export function TraceView({
           ) : (
             <p className="muted">Select a span or group to inspect its input, output and attributes.</p>
           )}
-        </aside>
+        </aside>}
       </div>
     </div>
   );
@@ -377,7 +238,7 @@ function GroupDetail({
   });
   return (
     <>
-      <p className="eyebrow">GROUP</p>
+      <p className="kicker">Group</p>
       <h3>{group.name}</h3>
       <p>
         <span className="pill">{group.memberIds.length} calls</span>{" "}
@@ -387,7 +248,7 @@ function GroupDetail({
         )}
       </p>
       <p className="muted">
-        Observed duration {formatMs(group.durationMs)} is the sum of member spans, not wall-clock elapsed time.
+        Recorded duration sum {formatMs(group.durationMs)} is not wall-clock elapsed time. Missing member timing is excluded from interpretation; inspect each member for provenance.
       </p>
       <h4>Members</h4>
       <ul className="finding-list compact">
@@ -437,7 +298,7 @@ function GroupDetail({
 function SpanDetail({ span, findings }: { span: Span; findings: DiagnosticFinding[] }) {
   return (
     <>
-      <p className="eyebrow">{span.type.toUpperCase()}</p>
+      <p className="kicker">{span.type}</p>
       <h3>{span.name}</h3>
       <p><span className={`pill ${span.status}`}>{span.status}</span></p>
       {findings.length > 0 && (
@@ -452,8 +313,9 @@ function SpanDetail({ span, findings }: { span: Span; findings: DiagnosticFindin
           </ul>
         </>
       )}
+      <p className="muted">{spanTiming(span).explanation}</p>
       <dl className="kv">
-        <div><dt>Duration</dt><dd>{formatMs(span.duration_ms)}</dd></div>
+        <div><dt>Duration</dt><dd>{spanTiming(span).label}</dd></div>
         <div><dt>Tokens</dt><dd>{formatTokenLabel(span.token_count, spanUsageStatus(span, "token"))}</dd></div>
         {typeof span.attributes?.["gen_ai.usage.input_tokens"] === "number" && (
           <div><dt>Input</dt><dd>{Number(span.attributes["gen_ai.usage.input_tokens"]).toLocaleString()}</dd></div>
@@ -484,34 +346,33 @@ function SpanDetail({ span, findings }: { span: Span; findings: DiagnosticFindin
   );
 }
 
-function numberAttr(attributes: Record<string, unknown> | undefined, key: string): number | null {
-  const value = attributes?.[key];
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
+interface TurnDetail { turn_key: string; status: string; evidence: string; provenance: string }
 
-function formatCost(usd: number): string {
-  return `$${usd.toFixed(usd >= 1 ? 2 : 4)}`;
+function slug(label: string): string {
+  return label.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function spanEstimateLabel(span: Span): string {
-  const status = typeof span.attributes?.["nm5.estimated_cost_status"] === "string"
-    ? String(span.attributes["nm5.estimated_cost_status"])
-    : null;
-  const amount = numberAttr(span.attributes, "nm5.estimated_cost_usd");
-  return formatEstimatedCostLabel(amount, status);
+  return costPresentation({ attributes: span.attributes }).label;
 }
 
 function Json({ label, value }: { label: string; value: unknown }) {
   if (value == null) return null;
   return (
-    <>
-      <h4>{label}</h4>
+    <details className="json-inspector">
+      <summary>{label}</summary>
       <pre>{JSON.stringify(value, null, 2)}</pre>
-    </>
+    </details>
   );
+}
+
+function navigateTabs(event: KeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+  if (current < 0) return;
+  event.preventDefault();
+  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[next].focus();
+  tabs[next].click();
 }

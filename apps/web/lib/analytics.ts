@@ -1,3 +1,5 @@
+import { aggregateEstimatedCost } from "./cost-aggregation.ts";
+import { spanTiming } from "./presentation.ts";
 import type { Span, SpanType, Trace } from "./types.ts";
 import { isCompleteEstimate, isMeasuredCost, isMeasuredTokens, percentile, spanUsageStatus } from "./stats.ts";
 
@@ -112,6 +114,7 @@ export interface TypeStat {
   count: number;
   errors: number;
   avgMs: number;
+  timedCount: number;
   p95Ms: number;
   tokens: number;
   cost: number;
@@ -124,12 +127,13 @@ export function spanTypeStats(traces: Trace[]): TypeStat[] {
   }
   return [...buckets.entries()]
     .map(([type, spans]) => {
-      const durations = spans.map((span) => span.duration_ms);
+      const durations = spans.filter(span => spanTiming(span).label !== "Not reported").map((span) => span.duration_ms);
       return {
         type,
         count: spans.length,
         errors: spans.filter((span) => span.status === "error").length,
-        avgMs: durations.reduce((a, b) => a + b, 0) / spans.length,
+        avgMs: durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : 0,
+        timedCount: durations.length,
         p95Ms: percentile(durations, 95),
         tokens: spans.reduce((a, span) => {
           return spanUsageStatus(span, "token") === "unavailable" ? a : a + span.token_count;
@@ -156,6 +160,7 @@ export interface ProjectStat {
   tokens: number;
   cost: number;
   estimatedCost: number;
+  estimate?: ReturnType<typeof aggregateEstimatedCost>;
 }
 
 export function projectStats(traces: Trace[]): ProjectStat[] {
@@ -176,7 +181,7 @@ export function projectStats(traces: Trace[]): ProjectStat[] {
     if (isCompleteEstimate(trace)) stat.estimatedCost += trace.estimated_cost_usd ?? 0;
     map.set(trace.project_id, stat);
   }
-  return [...map.values()].sort((a, b) => b.cost - a.cost);
+  return [...map.values()].map(stat => ({ ...stat, estimate: aggregateEstimatedCost(traces.filter(trace => trace.project_id === stat.project)) })).sort((a, b) => b.cost - a.cost);
 }
 
 export interface TimeBucket {

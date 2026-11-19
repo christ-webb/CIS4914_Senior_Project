@@ -282,7 +282,7 @@ def test_cursor_open_tool_span_inactivity_is_interrupted() -> None:
     ]
     trace = reconstruct_trace(events, now=t0 + timedelta(seconds=122), inactivity_seconds=120)
     assert trace.lifecycle is RunLifecycle.INTERRUPTED
-    assert trace.execution_state is ExecutionState.EXECUTING
+    assert trace.execution_state is ExecutionState.UNKNOWN
     assert trace.status is SpanStatus.UNSET
 
 
@@ -324,6 +324,24 @@ def test_model_only_turn_stays_executing_until_stop() -> None:
     )
     late = reconstruct_trace(events, now=t0 + timedelta(seconds=130), inactivity_seconds=120)
     assert late.execution_state is ExecutionState.IDLE
+    events.append(
+        _event(
+            RunEventType.SPAN_COMPLETE,
+            4,
+            t0 + timedelta(seconds=21),
+            {
+                "span_id": str(uuid4()),
+                "type": "tool",
+                "name": "late tool result",
+                "duration_ms": 10,
+                "attributes": {"nm5.generation_id": "g1"},
+            },
+        )
+    )
+    assert (
+        reconstruct_trace(events, now=t0 + timedelta(seconds=22)).execution_state
+        is ExecutionState.IDLE
+    )
 
 
 def test_stop_usage_replaces_after_agent_response_not_max() -> None:
@@ -746,3 +764,47 @@ def test_codex_inactivity_without_stop_still_interrupted() -> None:
     trace = reconstruct_trace(events, now=t0 + timedelta(seconds=121), inactivity_seconds=120)
     assert trace.lifecycle is RunLifecycle.INTERRUPTED
     assert trace.execution_state is ExecutionState.UNKNOWN
+
+
+def test_delayed_replay_is_not_fresh_execution() -> None:
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    events = [
+        _cursor_start(t0),
+        _event(
+            RunEventType.SPAN_START,
+            1,
+            t0,
+            {"span_id": str(uuid4()), "type": "tool", "name": "Shell"},
+            received=t0 + timedelta(days=10),
+        ),
+    ]
+    trace = reconstruct_trace(events, now=t0 + timedelta(days=10))
+    assert trace.lifecycle is RunLifecycle.INTERRUPTED
+    assert trace.execution_state is ExecutionState.UNKNOWN
+
+
+def test_non_cursor_execution_requires_current_work_or_heartbeat() -> None:
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    start = _event(RunEventType.RUN_START, 0, t0, {"project_id": "p", "name": "sdk"})
+    assert reconstruct_trace([start], now=t0).execution_state is ExecutionState.UNKNOWN
+    heartbeat = _event(RunEventType.HEARTBEAT, 1, t0, {})
+    assert reconstruct_trace([start, heartbeat], now=t0).execution_state is ExecutionState.EXECUTING
+    stale = reconstruct_trace([start, heartbeat], now=t0 + timedelta(seconds=121))
+    assert stale.lifecycle is RunLifecycle.INTERRUPTED
+    assert stale.execution_state is ExecutionState.UNKNOWN
+
+
+def test_codex_completed_turn_stays_idle_without_finalizing() -> None:
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    start = _event(
+        RunEventType.RUN_START,
+        0,
+        t0,
+        {"project_id": "p", "name": "codex", "attributes": {"nm5.source": "cli"}},
+    )
+    stop = _event(RunEventType.HEARTBEAT, 1, t0, {"progress": "Stop"})
+    trace = reconstruct_trace([start, stop], now=t0 + timedelta(days=1))
+    assert trace.lifecycle is RunLifecycle.RUNNING
+    assert trace.execution_state is ExecutionState.IDLE
+    assert trace.ended_at is None
+    assert trace.attributes["nm5.last_turn_completed"] is True

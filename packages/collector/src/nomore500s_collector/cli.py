@@ -94,17 +94,23 @@ def cursor_install_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cursor-home", type=Path, default=None)
     parser.add_argument("--project", type=Path, default=None)
     parser.add_argument("--command", default=None)
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Bake NM5_HOOK_DEBUG=1 into the observe-only wrapper (still overridable)",
+    )
     args = parser.parse_args(argv)
     path = install_cursor_hooks(
         project=args.project,
         cursor_home=args.cursor_home or default_cursor_home(),
         command=args.command,
+        debug=args.debug,
     )
     print(f"Installed Cursor collector hooks in {path}")
     print("Hooks are observe-only and always return {} with exit 0.")
     print("Permission-sensitive hooks are not registered so Cursor keeps its own allow/deny flow.")
     print("User-level hooks apply locally; cloud agents require project .cursor/hooks.json.")
-    print("Set NM5_HOOK_DEBUG=1 for bounded wrapper and Python hook diagnostics.")
+    print("Set NM5_HOOK_DEBUG=1, or pass --debug, for bounded wrapper and Python hook diagnostics.")
     return 0
 
 

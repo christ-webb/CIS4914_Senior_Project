@@ -132,3 +132,12 @@ describe("TraceView React Flow graph", () => {
     expect(graph.dataset.selected === "s-fail" || graph.innerHTML.includes("s-fail")).toBeTruthy();
   });
 });
+
+it("supports keyboard graph mode navigation", () => {
+  render(<Harness />);
+  const overview = screen.getByTestId("graph-mode-overview");
+  overview.focus();
+  fireEvent.keyDown(overview, { key: "ArrowRight" });
+  expect(screen.getByTestId("execution-graph").dataset.graphMode).toBe("full");
+  expect(document.activeElement).toBe(screen.getByTestId("graph-mode-full"));
+});

@@ -2,7 +2,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from no_more_500s_api.domain.models import (
@@ -42,6 +42,8 @@ class TraceStorageError(RuntimeError):
 
 @dataclass(frozen=True)
 class TraceListQuery:
+    fixtures: Literal["exclude", "only", "include"] = "include"
+    activity: Literal["active", "idle", "terminal", "completed_turns"] | None = None
     project_id: str | None = None
     status: SpanStatus | None = None
     lifecycle: RunLifecycle | None = None
@@ -91,6 +93,26 @@ def apply_trace_list_query(
 ) -> list[TraceSummary]:
     """Filter, newest-first order with trace_id tie-break, then paginate."""
     items = summaries
+    if query.fixtures != "include":
+        items = [item for item in items if item.is_fixture == (query.fixtures == "only")]
+    if query.activity == "active":
+        items = [
+            item
+            for item in items
+            if item.lifecycle == "running" and item.execution_state == "executing"
+        ]
+    elif query.activity == "idle":
+        items = [
+            item for item in items if item.lifecycle == "running" and item.execution_state == "idle"
+        ]
+    elif query.activity == "terminal":
+        items = [
+            item
+            for item in items
+            if item.lifecycle in {"completed", "failed", "cancelled"} and item.ended_at is not None
+        ]
+    elif query.activity == "completed_turns":
+        items = [item for item in items if item.turns_completed > 0]
     if query.project_id is not None:
         items = [item for item in items if item.project_id == query.project_id]
     if query.status is not None:
@@ -144,9 +166,7 @@ class InMemoryTraceRepository:
 
     def list(self, query: TraceListQuery | None = None) -> Iterable[TraceSummary]:
         with self._lock:
-            summaries = [
-                TraceSummary.from_trace(trace) for trace in self._all_traces_unlocked()
-            ]
+            summaries = [TraceSummary.from_trace(trace) for trace in self._all_traces_unlocked()]
         return apply_trace_list_query(summaries, query or TraceListQuery())
 
     def list_projects(self) -> Iterable[str]:

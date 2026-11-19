@@ -1,3 +1,7 @@
+import "@fontsource/barlow-condensed/600.css";
+import "@fontsource/barlow-condensed/700.css";
+import "@fontsource/barlow-condensed/800.css";
+import "@fontsource-variable/inter";
 import "@xyflow/react/dist/style.css";
 import "./globals.css";
 
@@ -17,4 +21,3 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     </html>
   );
 }
-

@@ -9,7 +9,7 @@ import {
 } from "../lib/history.ts";
 
 test("buildTraceListPath keeps an unfiltered list contract", () => {
-  assert.equal(buildTraceListPath(), "/v1/traces");
+  assert.equal(buildTraceListPath(), "/v1/traces?fixtures=exclude");
 });
 
 test("buildTraceListPath encodes filters and pagination", () => {
@@ -22,7 +22,7 @@ test("buildTraceListPath encodes filters and pagination", () => {
       offset: 20,
       lifecycle: "running",
     }),
-    "/v1/traces?project_id=demo&status=error&lifecycle=running&started_after=2026-01-01T00%3A00%3A00.000Z&limit=21&offset=20",
+    "/v1/traces?fixtures=exclude&project_id=demo&status=error&lifecycle=running&started_after=2026-01-01T00%3A00%3A00.000Z&limit=21&offset=20",
   );
 });
 

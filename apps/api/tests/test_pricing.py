@@ -219,3 +219,27 @@ def test_status_aware_from_create_skips_unavailable() -> None:
         )
     )
     assert stored.total_tokens == 3
+
+
+def test_pricing_disclosure_metadata_preserves_unknown_variant_status() -> None:
+    from no_more_500s_api.pricing.estimate import annotate_span_estimate
+
+    span = _llm(**{
+        "nm5.model_id": "grok-4.7",
+        "nm5.token_accounting": "inclusive_cache",
+        "gen_ai.usage.input_tokens": 100,
+        "gen_ai.usage.output_tokens": 10,
+        "gen_ai.usage.cache_read_tokens": 50,
+    })
+    before = estimate_trace_usage([span])
+    annotated = annotate_span_estimate(span)
+    assert annotated.attributes["nm5.estimated_cost_status"] == "unavailable"
+    assert "nm5.estimated_cost_usd" not in annotated.attributes
+    details = annotated.attributes["nm5.pricing_details"]
+    assert set(details) == {"standard", "fast"}
+    for variant, detail in details.items():
+        estimate = estimate_generation(span, variant_override=variant, scenario=True)
+        assert Decimal(detail["amount_usd"]) == estimate.amount
+        assert detail["rates"] == estimate.rates
+        assert detail["source"] == estimate.source_url
+    assert estimate_trace_usage([annotated]) == before

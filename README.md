@@ -36,7 +36,8 @@ cp .env.example .env
 make bootstrap
 ```
 
-Start ClickHouse, then the API and web app in separate terminals:
+Start ClickHouse, then the API and web app in separate **OS** terminals
+(not Cursor's integrated terminals; those stop when the IDE quits):
 
 ```bash
 make clickhouse
@@ -104,3 +105,10 @@ production deployment are intentionally outside this initial scaffold.
 - [API contract](docs/architecture/api-contract.md)
 - [Development guide](docs/development.md)
 - [Architecture decisions](docs/decisions/)
+
+### Local history management
+
+`uv run nm5-history` is an OS-authenticated local CLI for clearing development history.
+See [the local-history guide](docs/local-history.md) for opt-in setup, stopped-writer
+requirements, confirmation, recovery, and post-reset session-creation limitations.
+The web application has no destructive reset endpoint.

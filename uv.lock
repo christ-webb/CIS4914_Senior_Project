@@ -770,6 +770,7 @@ source = { editable = "apps/api" }
 dependencies = [
     { name = "clickhouse-connect" },
     { name = "fastapi" },
+    { name = "no-more-500s-collector" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -778,6 +779,7 @@ dependencies = [
 requires-dist = [
     { name = "clickhouse-connect", specifier = ">=0.8,<1" },
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "no-more-500s-collector", editable = "packages/collector" },
     { name = "pydantic-settings", specifier = ">=2.6,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32,<1" },
 ]

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from threading import Lock
 from typing import Any, cast
@@ -470,7 +470,11 @@ class ClickHouseTraceRepository:
             for row in span_result.result_rows
         ]
         started = _utc_column(started_at)
-        ended = started if parsed_status in {SpanStatus.OK, SpanStatus.ERROR} else None
+        ended = (
+            started + timedelta(milliseconds=duration_ms)
+            if parsed_status in {SpanStatus.OK, SpanStatus.ERROR}
+            else None
+        )
 
         return Trace(
             trace_id=tid,
@@ -507,7 +511,7 @@ class ClickHouseTraceRepository:
         result = self._client_or_raise().query(
             f"""
             SELECT trace_id, project_id, name, started_at, duration_ms,
-                   total_tokens, total_cost_usd, status
+                   total_tokens, total_cost_usd, status, attributes_json, ingestion_id
             FROM traces
             WHERE {" AND ".join(clauses)}
             ORDER BY started_at DESC, trace_id DESC
@@ -523,27 +527,45 @@ class ClickHouseTraceRepository:
             live_ids.add(trace.trace_id)
             live_summaries.append(TraceSummary.from_trace(trace))
 
+        failures = {
+            (row[0], row[1]): row[2]
+            for row in self._client_or_raise()
+            .query(
+                "SELECT trace_id, ingestion_id, countIf(status = 'error') FROM spans "
+                "GROUP BY trace_id, ingestion_id"
+            )
+            .result_rows
+        }
         batch = [
-            TraceSummary(
-                trace_id=row[0],
-                project_id=row[1],
-                name=row[2],
-                started_at=_utc_column(row[3]),
-                duration_ms=row[4],
-                total_tokens=row[5],
-                total_cost_usd=float(row[6]),
-                status=SpanStatus(row[7]),
-                lifecycle=lifecycle_from_batch_status(SpanStatus(row[7])),
-                last_activity_at=_utc_column(row[3]),
-                ended_at=(
-                    _utc_column(row[3])
-                    if SpanStatus(row[7]) in {SpanStatus.OK, SpanStatus.ERROR}
-                    else None
-                ),
+            TraceSummary.from_trace(
+                Trace(
+                    trace_id=row[0],
+                    project_id=row[1],
+                    name=row[2],
+                    started_at=_utc_column(row[3]),
+                    duration_ms=row[4],
+                    total_tokens=row[5],
+                    total_cost_usd=float(row[6]),
+                    status=SpanStatus(row[7]),
+                    attributes=_load(row[8]) or {},
+                    spans=[],
+                    lifecycle=lifecycle_from_batch_status(SpanStatus(row[7])),
+                    last_activity_at=_utc_column(row[3]),
+                    ended_at=(
+                        _utc_column(row[3]) + timedelta(milliseconds=row[4])
+                        if SpanStatus(row[7]) in {SpanStatus.OK, SpanStatus.ERROR}
+                        else None
+                    ),
+                )
             )
             for row in result.result_rows
             if row[0] not in live_ids
         ]
+
+        for item, row in zip(
+            batch, (row for row in result.result_rows if row[0] not in live_ids), strict=True
+        ):
+            item.failure_count = int(failures.get((row[0], row[9]), 0))
         return apply_trace_list_query(live_summaries + batch, query)
 
 

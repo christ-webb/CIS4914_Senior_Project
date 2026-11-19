@@ -19,6 +19,11 @@ export interface Span {
 }
 
 export interface TraceSummary {
+  logical_run_id?: string | null;
+  pricing_source?: string | null;
+  is_fixture?: boolean;
+  last_turn_completed?: boolean;
+  failure_count?: number;
   trace_id: string;
   project_id: string;
   name: string;
@@ -49,6 +54,17 @@ export interface TraceSummary {
   scenario_fast_usd?: number | null;
   covered_generations?: number | null;
   total_generations?: number | null;
+  turns_total?: number;
+  turns_completed?: number;
+  turns_failed?: number;
+  turns_interrupted?: number;
+  turns_executing?: number;
+  turns_provisional?: number;
+  latest_turn_status?: "executing" | "response_observed" | "completed" | "failed" | "interrupted" | null;
+  latest_turn_evidence?: string | null;
+  latest_turn_completed_at?: string | null;
+  task_outcome?: "unverified" | "reported_success" | "reported_failure" | "verified_success" | "verified_failure";
+  task_outcome_source?: string | null;
 }
 
 export interface Trace extends TraceSummary {
@@ -122,10 +138,7 @@ export interface DiagnosticSummary {
 }
 
 export function traceLifecycle(trace: Pick<TraceSummary, "lifecycle" | "status">): RunLifecycle {
-  if (trace.lifecycle) return trace.lifecycle;
-  if (trace.status === "ok") return "completed";
-  if (trace.status === "error") return "failed";
-  return "unknown";
+  return trace.lifecycle ?? "unknown";
 }
 
 export function executionState(
@@ -155,12 +168,7 @@ export function isExecutingRun(
     attributes?: Record<string, unknown>;
   },
 ): boolean {
-  if (executionState(trace) === "idle") return false;
-  const lifecycle = traceLifecycle(trace);
-  if (isCursorTrace(trace)) {
-    return lifecycle === "running" && executionState(trace) === "executing";
-  }
-  return lifecycle === "running" || lifecycle === "interrupted";
+  return trace.lifecycle === "running" && executionState(trace) === "executing";
 }
 
 export function isIdleOpenRun(
@@ -168,11 +176,11 @@ export function isIdleOpenRun(
     attributes?: Record<string, unknown>;
   },
 ): boolean {
-  return isCursorTrace(trace) && traceLifecycle(trace) === "running" && executionState(trace) === "idle";
+  return trace.lifecycle === "running" && executionState(trace) === "idle";
 }
 
 export function isActiveLifecycle(lifecycle: RunLifecycle): boolean {
-  return lifecycle === "running" || lifecycle === "interrupted";
+  return lifecycle === "running";
 }
 
 export function needsLivePolling(trace: Pick<TraceSummary, "lifecycle" | "status" | "execution_state" | "source" | "agent_framework">): boolean {

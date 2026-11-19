@@ -24,6 +24,22 @@ Not captured on 0.153.4 (unsupported, not fabricated):
 
 `Stop` is a per-turn heartbeat. It does **not** complete the run.
 
+## Turn evidence
+
+| Codex event | Turn status | Evidence |
+| --- | --- | --- |
+| `UserPromptSubmit` | `executing` | observed |
+| `PreToolUse` / `PostToolUse` with `turn_id` | `executing` (resumes the turn) | observed |
+| `Stop` | `completed` | `codex.Stop` |
+| `Interrupt` | `interrupted` | `codex.Interrupt` |
+| `SessionEnd` while a turn is executing | `interrupted` | inferred (`session.finalize`) |
+
+Turns are keyed by the hook payload's `turn_id`. Events recorded before the
+collector forwarded `turn_id` fall back to ordinal turns: each prompt opens a
+turn and the next `Stop` closes it. `SessionEnd` finalizes the session
+(`completed`, or `failed` on error) and never rewrites a completed turn. Codex
+does not report task success, so tasks stay **Unverified**.
+
 ## Setup
 
 1. Start ClickHouse, the API, and the collector (localhost only):
@@ -71,6 +87,17 @@ uv run nm5-codex-uninstall-hooks
 The hook is observe-only: it always exits 0 and prints `{}`. The collector binds
 `127.0.0.1`, requires a bearer token, rejects oversized bodies, and redacts
 prompts, tool I/O, assistant text, and transcript paths before SQLite or logs.
+Set `NM5_HOOK_DEBUG=1` for bounded delivery logs that include collector
+`result=` and `reason=` codes.
+
+### After a local history reset
+
+Codex CLI does not send `session_created_at`. The hook stamps
+`_nm5_creation_observed_at` on `SessionStart`. Post-reset admission requires
+`source` of `startup` or `new`. `resume` and inferred starts are rejected
+(`reason=untrusted_session_source`). Start a new Codex session after reset; do
+not expect a resumed thread to recreate cleared history. See
+[local-history.md](../local-history.md).
 
 ## Manual acceptance test
 

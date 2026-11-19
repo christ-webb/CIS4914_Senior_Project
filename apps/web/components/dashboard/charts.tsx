@@ -77,7 +77,7 @@ export function LatencyBars({
 }) {
   const max = Math.max(1, ...traces.map((trace) => trace.duration_ms));
   return (
-    <div className="bars" role="list">
+    <div><div className="chart-axis"><span>Recorded session duration</span><span>{formatMs(max)}</span></div><div className="bars" role="list">
       {traces.map((trace) => (
         <button
           key={trace.trace_id}
@@ -89,6 +89,7 @@ export function LatencyBars({
           onClick={() => onSelect(trace.trace_id)}
         />
       ))}
-    </div>
+    </div><div className="chart-axis"><span>Oldest</span><span>Newest · {traces.length} runs</span></div>
+    <details className="chart-values"><summary>View values</summary>{traces.map(trace => <p key={trace.trace_id}><button className="text-button" onClick={() => onSelect(trace.trace_id)}>{trace.name} · {formatMs(trace.duration_ms)} · {trace.status}</button></p>)}</details></div>
   );
 }

@@ -26,12 +26,14 @@ import {
   type VisibleGraph,
 } from "@/lib/execution-graph";
 import { NODE_H, NODE_W } from "@/lib/layout";
+import { spanTiming } from "@/lib/presentation";
 import { formatMs } from "@/lib/stats";
 import type { DiagnosticFinding, Span } from "@/lib/types";
 
 type SpanNodeData = { span: Span; maxDuration: number; highlight: string };
 type GroupNodeData = {
   group: SpanGroup;
+  timingLabel: string;
   highlight: string;
   expanded: boolean;
   onToggle: (id: string) => void;
@@ -46,7 +48,7 @@ function SpanNodeView({ data, selected }: NodeProps<Node<SpanNodeData, "span">>)
       <Handle type="target" position={Position.Left} />
       <div className="span-node-top">
         <span className="type-pill">{span.type}</span>
-        <span className="muted">{formatMs(span.duration_ms)}</span>
+        <span className="muted">{spanTiming(span).label}</span>
       </div>
       <div className="span-node-name" title={span.name}>{span.name}</div>
       <div className="span-node-bar"><i style={{ width: `${Math.max(4, (span.duration_ms / maxDuration) * 100)}%` }} /></div>
@@ -64,7 +66,7 @@ function GroupNodeView({ data, selected }: NodeProps<Node<GroupNodeData, "group"
       <div className="span-node-top">
         <span className="type-pill">{group.type} group</span>
         <span className="muted" title="Sum of member durations; not wall-clock elapsed if operations overlap.">
-          {formatMs(group.durationMs)} observed
+          {data.timingLabel}
         </span>
       </div>
       <div className="span-node-name" title={group.name}>
@@ -79,6 +81,7 @@ function GroupNodeView({ data, selected }: NodeProps<Node<GroupNodeData, "group"
         <button
           type="button"
           className="group-toggle"
+          aria-expanded={expanded}
           data-testid={`group-toggle-${group.id}`}
           onClick={(event) => {
             event.stopPropagation();
@@ -96,10 +99,10 @@ function GroupNodeView({ data, selected }: NodeProps<Node<GroupNodeData, "group"
 const nodeTypes = { span: SpanNodeView, group: GroupNodeView };
 
 function edgeStyle(edge: GraphEdge, failed: boolean) {
-  const color = failed ? "#f87171" : edge.kind === "parent" ? "#94a3b8" : "#64748b";
+  const color = failed ? "#b42318" : edge.kind === "parent" ? "#0021a5" : "#64748b";
   return {
     type: edge.kind === "order" ? "default" : "smoothstep",
-    animated: edge.kind === "parent" && !failed,
+    animated: false,
     markerEnd: { type: MarkerType.ArrowClosed, color },
     style: {
       stroke: color,
@@ -133,6 +136,7 @@ export function toFlowGraph(
         selected: node.id === activeId,
         data: {
           group: node.group,
+          timingLabel: node.group.memberIds.some(id => { const span = graph.spanById.get(id); return span && spanTiming(span).label === "Not reported"; }) ? "Timing incomplete" : `${formatMs(node.group.durationMs)} sum`,
           highlight: groupHighlightClass(node.group, findings, selectedFindingId),
           expanded: expandedGroupIds.has(node.group.id),
           onToggle: onToggleGroup,
@@ -197,7 +201,7 @@ function GraphInner({
 
   const applyFit = (nonce: number) => {
     const nodes = fitNodeIds?.length ? fitNodeIds.map((id) => ({ id })) : undefined;
-    fitView({ padding: 0.2, nodes, duration: nonce === 0 ? 0 : 200 });
+    fitView({ padding: 0.2, nodes, duration: nonce === 0 || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 200 });
   };
 
   useEffect(() => {
@@ -227,7 +231,7 @@ function GraphInner({
         fitView={false}
         minZoom={0.15}
         nodesDraggable={false}
-        colorMode="dark"
+        colorMode="light"
         onlyRenderVisibleElements={flow.nodes.length > FULL_TRACE_VIRTUALIZE_AFTER}
         onNodeClick={(_, node) => onSelect(node.id)}
         onPaneClick={() => onSelect(null)}
@@ -235,7 +239,7 @@ function GraphInner({
       >
         <Background gap={22} />
         <Controls showInteractive={false} />
-        <MiniMap pannable zoomable maskColor="rgba(8,10,18,.7)" />
+        <MiniMap pannable zoomable maskColor="rgba(243,245,248,.7)" />
       </ReactFlow>
     </div>
   );

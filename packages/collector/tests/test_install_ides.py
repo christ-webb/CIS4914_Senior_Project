@@ -177,6 +177,11 @@ def test_wrapper_script_quotes_python_path_with_spaces(tmp_path: Path) -> None:
         assert f"PYTHON={shlex.quote(python)}" in script
     generated = wrapper_script(Path("/tmp/venv dir/bin/python"))
     assert "PYTHON='/tmp/venv dir/bin/python'" in generated
+    assert "export NM5_HOOK_DEBUG" in generated
+    assert 'NM5_HOOK_DEBUG="${NM5_HOOK_DEBUG:-}"' in generated
+    debug = wrapper_script(Path("/tmp/python"), debug=True)
+    assert 'NM5_HOOK_DEBUG="${NM5_HOOK_DEBUG:-1}"' in debug
+    assert "export NM5_HOOK_DEBUG" in debug
 
 
 def test_wrapper_missing_interpreter_stays_observe_only(tmp_path: Path) -> None:

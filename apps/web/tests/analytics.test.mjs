@@ -88,3 +88,11 @@ test("timeBuckets distributes runs", () => {
   assert.equal(buckets[3].errors, 1);
   assert.deepEqual(timeBuckets([], 4), []);
 });
+
+test("missing hook timing is excluded instead of diluting recorded durations", () => {
+  const spans = [span("a", null, "tool", "observed", "ok", 40), span("b", null, "tool", "completion", "ok", 0, { attributes: { "nm5.span_source": "hooks" } })];
+  const stat = spanTypeStats([trace("timing", "2026-01-01", spans)])[0];
+  assert.equal(stat.count, 2);
+  assert.equal(stat.timedCount, 1);
+  assert.equal(stat.avgMs, 40);
+});
