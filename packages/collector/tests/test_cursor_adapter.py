@@ -1,3 +1,4 @@
+from nomore500s_collector.adapters.common import map_session_outcome
 from nomore500s_collector.adapters.cursor import CursorAdapter
 from nomore500s_collector.ids import span_id_for
 
@@ -38,6 +39,37 @@ def test_window_close_is_cancelled() -> None:
     )
     assert plan.events[0].payload["status"] == "cancelled"
     assert plan.events[0].payload["attributes"]["nm5.outcome"] == "cancelled"
+
+
+def test_session_end_preserves_cursor_reason_and_final_status() -> None:
+    plan = CursorAdapter().plan(
+        {
+            "hook_event_name": "sessionEnd",
+            "conversation_id": "c",
+            "reason": "user_close",
+            "final_status": "completed",
+            "duration_ms": 45000,
+        },
+        delivery_id="x",
+    )
+    attributes = plan.events[0].payload["attributes"]
+    assert plan.events[0].payload["status"] == "cancelled"
+    assert attributes["nm5.end_reason"] == "user_close"
+    assert attributes["nm5.cursor_final_status"] == "completed"
+
+
+def test_shared_session_outcome_mapping_is_unchanged() -> None:
+    assert [
+        map_session_outcome(reason)
+        for reason in ("completed", "error", "timeout", "aborted", "user_close", "window_close")
+    ] == [
+        ("completed", "success"),
+        ("failed", "failure"),
+        ("failed", "timeout"),
+        ("cancelled", "cancelled"),
+        ("cancelled", "cancelled"),
+        ("cancelled", "cancelled"),
+    ]
 
 
 def test_tool_failure_interrupt_is_not_model_failure() -> None:

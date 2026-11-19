@@ -67,14 +67,28 @@ registered, so Cursor keeps its own allow/deny flow. Tool spans come from
 
 ## Session outcomes
 
-| Cursor `reason` | Lifecycle | Outcome |
-| --- | --- | --- |
-| `completed` | `completed` | success |
-| `error` | `failed` | failure |
-| `aborted`, `user_close`, `window_close` | `cancelled` | cancelled |
+Cursor documents `reason` as `completed`, `aborted`, `error`, `window_close`,
+or `user_close`. The collector keeps the conservative wire mapping below and
+stores the original `reason` as `nm5.end_reason` (plus `final_status` as
+`nm5.cursor_final_status` when present). The API then reconciles closures
+against the durable turn history:
 
-Cancelled runs keep trace `status=unset` so they do not count as successful.
-A cancelled or closed session does not change turns that already completed.
+| Cursor `reason` | Turn evidence at close | Lifecycle | `nm5.lifecycle_evidence` |
+| --- | --- | --- | --- |
+| `completed` | any | `completed` | `cursor.sessionEnd` |
+| `error` | any | `failed` | `cursor.sessionEnd` |
+| `aborted` | any | `cancelled` | `cursor.sessionEnd` |
+| `user_close`, `window_close` | latest turn has `stop status=completed`, nothing executing | `completed` | `cursor.close_after_completed_turn` |
+| `user_close`, `window_close` | latest turn has `stop status=error` | `failed` | `cursor.close_after_failed_turn` |
+| `user_close`, `window_close` | latest turn executing, provisional, or aborted | `cancelled` | `cursor.close_before_turn_completed` |
+| `user_close`, `window_close` | no turns observed | `cancelled` | `cursor.close_without_turn_evidence` |
+
+A `stop` or `afterAgentResponse` delivered up to 15 s after a closure
+`sessionEnd` is still accepted, so racing hooks reconcile the same way as
+in-order delivery. Reconciliation runs on every read, so existing stored
+closures are reclassified without rewriting ClickHouse. A completed session is
+lifecycle only: task outcome stays **Unverified**. Cancelled runs keep trace
+`status=unset`. A closed session never changes turns that already completed.
 
 ## Turn evidence
 
@@ -96,8 +110,9 @@ stays provisional and is excluded from the turn completion rate.
 Example: you ask for a README edit, the agent finishes, and the chat stays
 open. Execution is **Idle**, the latest turn is **Completed**, the session is
 **Open**, and the task is **Unverified**. The turn counts toward turn
-completion. After you close the chat, the session is **Cancelled** and the
-turn stays **Completed**.
+completion. After you close the chat, the session is **Completed** (shown as
+*Session finalized*), the turn stays **Completed**, and the task stays
+**Unverified**. Closing while the agent is still working gives **Cancelled**.
 
 ## Coverage
 

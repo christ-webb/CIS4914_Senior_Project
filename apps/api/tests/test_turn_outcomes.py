@@ -104,14 +104,189 @@ def test_completed_turn_with_open_session() -> None:
     assert summary.latest_turn_completed_at == T0 + timedelta(seconds=4)
 
 
+def close(log: Log, seconds: float, reason: str = "user_close") -> Log:
+    """Finalize exactly as the collector maps a Cursor sessionEnd."""
+    return log.finalize(
+        seconds, "cancelled", **{"nm5.end_reason": reason, "nm5.outcome": "cancelled"}
+    )
+
+
 def test_completed_turn_survives_chat_closure() -> None:
-    log = readme_turn(cursor()).finalize(10, "cancelled", **{"nm5.end_reason": "user_close"})
-    summary = log.summary()
-    assert summary.lifecycle is RunLifecycle.CANCELLED
+    log = close(readme_turn(cursor()), 10)
+    trace = log.trace()
+    summary = TraceSummary.from_trace(trace)
+    assert summary.lifecycle is RunLifecycle.COMPLETED
+    assert trace.status is SpanStatus.OK
+    assert summary.ended_at == T0 + timedelta(seconds=10)
     assert summary.turns_completed == 1
     assert summary.turns_failed == summary.turns_interrupted == 0
     assert summary.latest_turn_status == "completed"
     assert summary.task_outcome == "unverified"
+    assert summary.task_outcome_source is None
+    assert trace.attributes["nm5.end_reason"] == "user_close"
+    assert trace.attributes["nm5.reported_session_status"] == "cancelled"
+    assert trace.attributes["nm5.lifecycle_evidence"] == "cursor.close_after_completed_turn"
+    assert "error" not in trace.attributes
+
+
+def test_window_close_after_completed_turn_is_completed() -> None:
+    trace = close(readme_turn(cursor()), 10, "window_close").trace()
+    assert trace.lifecycle is RunLifecycle.COMPLETED
+    assert trace.attributes["nm5.end_reason"] == "window_close"
+
+
+def test_multiple_completed_turns_then_close_is_completed() -> None:
+    log = readme_turn(cursor(), "g1", 1)
+    readme_turn(log, "g2", 10)
+    readme_turn(log, "g3", 20)
+    summary = close(log, 30).summary()
+    assert summary.lifecycle is RunLifecycle.COMPLETED
+    assert (summary.turns_total, summary.turns_completed) == (3, 3)
+
+
+def test_earlier_aborted_turn_does_not_block_completion_of_latest() -> None:
+    log = cursor().beat(1, "afterAgentThought", **{"nm5.generation_id": "g1"})
+    log.beat(2, "stop", **{"nm5.generation_id": "g1", "nm5.turn_status": "aborted"})
+    readme_turn(log, "g2", 5)
+    summary = close(log, 20).summary()
+    assert summary.lifecycle is RunLifecycle.COMPLETED
+    assert (summary.turns_completed, summary.turns_interrupted) == (1, 1)
+
+
+def test_close_during_execution_is_cancelled() -> None:
+    log = cursor().beat(1, "afterAgentThought", **{"nm5.generation_id": "g1"})
+    log.tool(2, **{"nm5.generation_id": "g1"})
+    trace = close(log, 3).trace()
+    assert trace.lifecycle is RunLifecycle.CANCELLED
+    assert trace.status is SpanStatus.UNSET
+    assert trace.attributes["nm5.latest_turn_status"] == "interrupted"
+    assert trace.attributes["nm5.lifecycle_evidence"] == "cursor.close_before_turn_completed"
+
+
+def test_completed_turn_then_unfinished_turn_then_close_is_not_completed() -> None:
+    log = readme_turn(cursor()).beat(10, "afterAgentThought", **{"nm5.generation_id": "g2"})
+    trace = close(log, 12).trace()
+    assert trace.lifecycle is RunLifecycle.CANCELLED
+    turns = {turn["turn_key"]: turn["status"] for turn in trace.attributes["nm5.turns"]}
+    assert turns == {"id:g1": "completed", "id:g2": "interrupted"}
+
+
+def test_completed_turn_then_provisional_response_then_close_is_not_completed() -> None:
+    log = readme_turn(cursor()).beat(10, "afterAgentResponse", **{"nm5.generation_id": "g2"})
+    summary = close(log, 12).summary()
+    assert summary.lifecycle is RunLifecycle.CANCELLED
+    assert summary.turns_completed == 1 and summary.turns_provisional == 1
+
+
+def test_completed_turn_then_aborted_turn_then_close_is_cancelled() -> None:
+    log = readme_turn(cursor()).beat(10, "afterAgentThought", **{"nm5.generation_id": "g2"})
+    log.beat(11, "stop", **{"nm5.generation_id": "g2", "nm5.turn_status": "aborted"})
+    summary = close(log, 12).summary()
+    assert summary.lifecycle is RunLifecycle.CANCELLED
+    assert summary.latest_turn_status == "interrupted"
+
+
+def test_unattributed_work_after_stop_blocks_completion() -> None:
+    summary = close(readme_turn(cursor()).tool(8), 10).summary()
+    assert summary.lifecycle is RunLifecycle.CANCELLED
+
+
+def test_failed_turn_then_close_is_failed() -> None:
+    log = readme_turn(cursor()).beat(10, "afterAgentThought", **{"nm5.generation_id": "g2"})
+    log.beat(11, "stop", **{"nm5.generation_id": "g2", "nm5.turn_status": "error"})
+    trace = close(log, 12).trace()
+    assert trace.lifecycle is RunLifecycle.FAILED
+    assert trace.status is SpanStatus.ERROR
+    assert trace.attributes["error"]["evidence"] == "cursor.stop"
+    assert trace.attributes["nm5.lifecycle_evidence"] == "cursor.close_after_failed_turn"
+    assert (trace.attributes["nm5.turns_completed"], trace.attributes["nm5.turns_failed"]) == (1, 1)
+
+
+def test_close_without_turn_evidence_stays_cancelled() -> None:
+    trace = close(cursor(), 5).trace()
+    assert trace.lifecycle is RunLifecycle.CANCELLED
+    assert trace.attributes["nm5.lifecycle_evidence"] == "cursor.close_without_turn_evidence"
+
+
+def test_explicit_cursor_end_reasons_are_preserved() -> None:
+    aborted = readme_turn(cursor()).finalize(10, "cancelled", **{"nm5.end_reason": "aborted"})
+    errored = readme_turn(cursor()).finalize(10, "failed", **{"nm5.end_reason": "error"})
+    done = cursor().finalize(10, "completed", **{"nm5.end_reason": "completed"})
+    assert aborted.summary().lifecycle is RunLifecycle.CANCELLED
+    assert errored.summary().lifecycle is RunLifecycle.FAILED
+    assert done.summary().lifecycle is RunLifecycle.COMPLETED
+    assert aborted.trace().attributes["nm5.lifecycle_evidence"] == "cursor.sessionEnd"
+
+
+def test_late_stop_after_close_is_reconciled() -> None:
+    log = cursor().beat(1, "afterAgentThought", **{"nm5.generation_id": "g1"})
+    log.beat(2, "afterAgentResponse", **{"nm5.generation_id": "g1"})
+    close(log, 3)
+    assert log.summary().lifecycle is RunLifecycle.CANCELLED
+    log.beat(3.5, "stop", **{"nm5.generation_id": "g1", "nm5.turn_status": "completed"})
+    in_order = close(
+        cursor()
+        .beat(1, "afterAgentThought", **{"nm5.generation_id": "g1"})
+        .beat(2, "afterAgentResponse", **{"nm5.generation_id": "g1"})
+        .beat(3.5, "stop", **{"nm5.generation_id": "g1", "nm5.turn_status": "completed"}),
+        3,
+    )
+    late, ordered = log.trace(), in_order.trace()
+    assert late.lifecycle is ordered.lifecycle is RunLifecycle.COMPLETED
+    assert late.ended_at == ordered.ended_at == T0 + timedelta(seconds=3)
+    assert late.attributes["nm5.end_reason"] == ordered.attributes["nm5.end_reason"]
+    assert late.attributes["nm5.turns"] == ordered.attributes["nm5.turns"]
+
+
+def test_stop_long_after_close_is_ignored() -> None:
+    log = close(cursor().beat(1, "afterAgentThought", **{"nm5.generation_id": "g1"}), 3)
+    log.beat(600, "stop", **{"nm5.generation_id": "g1", "nm5.turn_status": "completed"})
+    assert log.summary().lifecycle is RunLifecycle.CANCELLED
+
+
+def test_duplicate_lifecycle_events_are_idempotent() -> None:
+    log = close(readme_turn(cursor()), 10)
+    log.events.extend(list(log.events))
+    log.beat(11, "stop", **{"nm5.generation_id": "g1", "nm5.turn_status": "error"})
+    log.finalize(12, "cancelled", **{"nm5.end_reason": "aborted"})
+    first, second = log.trace(), log.trace()
+    assert first.lifecycle is RunLifecycle.COMPLETED
+    assert first.attributes["nm5.end_reason"] == "user_close"
+    assert first.attributes["nm5.turns_completed"] == 1
+    assert first.attributes["nm5.turns_failed"] == 0
+    assert first.model_dump() == second.model_dump()
+
+
+def test_reconstruction_is_independent_of_input_order() -> None:
+    log = close(readme_turn(cursor()), 10)
+    forward = reconstruct_trace(log.events, now=T0 + timedelta(seconds=30))
+    backward = reconstruct_trace(list(reversed(log.events)), now=T0 + timedelta(seconds=30))
+    assert forward.model_dump() == backward.model_dump()
+    assert forward.lifecycle is RunLifecycle.COMPLETED
+
+
+def test_closed_completed_session_counts_as_completed_not_verified() -> None:
+    closed = close(readme_turn(cursor()), 10).summary()
+    rows = apply_trace_list_query([closed], TraceListQuery(lifecycle=RunLifecycle.COMPLETED))
+    assert [row.trace_id for row in rows] == [closed.trace_id]
+    terminal = apply_trace_list_query([closed], TraceListQuery(activity="terminal"))
+    assert [row.trace_id for row in terminal] == [closed.trace_id]
+    assert closed.task_outcome == "unverified"
+
+
+def test_codex_session_lifecycle_is_unchanged() -> None:
+    log = codex().beat(1, "UserPromptSubmit", **{"nm5.turn_id": "t1"})
+    log.beat(2, "Stop", **{"nm5.turn_id": "t1", "nm5.turn_status": "completed"})
+    trace = log.finalize(3, "cancelled", **{"nm5.end_reason": "user_close"}).trace()
+    assert trace.lifecycle is RunLifecycle.CANCELLED
+    assert "nm5.lifecycle_evidence" not in trace.attributes
+
+
+def test_sdk_session_lifecycle_is_unchanged() -> None:
+    log = Log({"nm5.source": "sdk"}).tool(1)
+    trace = log.finalize(2, "cancelled", **{"nm5.end_reason": "window_close"}).trace()
+    assert trace.lifecycle is RunLifecycle.CANCELLED
+    assert "nm5.lifecycle_evidence" not in trace.attributes
 
 
 def test_cursor_thought_step_ids_belong_to_their_generation_turn() -> None:

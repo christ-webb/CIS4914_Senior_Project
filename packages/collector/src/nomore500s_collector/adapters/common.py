@@ -159,6 +159,8 @@ def finalize_event(
     status: str,
     reason: str,
     outcome: str,
+    *,
+    attributes: dict[str, Any] | None = None,
 ) -> MappedEvent:
     error = None if status == "completed" else {"reason": reason, "outcome": outcome}
     return MappedEvent(
@@ -170,6 +172,7 @@ def finalize_event(
             "status": status,
             "error": error,
             "attributes": {
+                **(attributes or {}),
                 "nm5.end_reason": reason,
                 "nm5.outcome": outcome,
             },

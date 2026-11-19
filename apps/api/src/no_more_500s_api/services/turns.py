@@ -11,6 +11,10 @@ Session lifecycle, agent turn status and task outcome are separate concepts:
 * Task outcome is never inferred from turn completion. It is ``unverified``
   unless an event explicitly reports (agent self-report) or verifies
   (independent verifier) it.
+* A Cursor session closed by the user (``user_close``/``window_close``) is
+  reconciled from this ledger: it is ``completed`` only when the latest turn
+  has an observed ``stop`` completion and nothing is still executing. That is
+  session lifecycle only; it never changes task outcome.
 """
 
 from __future__ import annotations
@@ -234,6 +238,13 @@ class TurnLedger:
 
     def ordered(self) -> list[Turn]:
         return sorted(self.turns.values(), key=lambda turn: turn.ordinal)
+
+    def latest(self) -> Turn | None:
+        turns = self.ordered()
+        return turns[-1] if turns else None
+
+    def executing(self) -> bool:
+        return any(turn.status == EXECUTING for turn in self.turns.values())
 
     def summary_attributes(self) -> dict[str, Any]:
         turns = self.ordered()

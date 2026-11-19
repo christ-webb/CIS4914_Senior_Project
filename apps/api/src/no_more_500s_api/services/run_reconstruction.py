@@ -21,9 +21,14 @@ from no_more_500s_api.domain.models import (
     Trace,
 )
 from no_more_500s_api.pricing.estimate import annotate_span_estimate, estimate_trace_usage
-from no_more_500s_api.services.turns import TurnLedger
+from no_more_500s_api.services.turns import COMPLETED, FAILED, TurnLedger
 
 CURSOR_TURN_COMPLETE = {"stop", "afterAgentResponse"}
+# Cursor documents sessionEnd reasons completed/aborted/error/window_close/user_close.
+# Only the two closure reasons are ambiguous about whether the agent had finished.
+CURSOR_CLOSE_REASONS = {"user_close", "window_close"}
+# Separate hook processes can deliver stop/afterAgentResponse just after sessionEnd.
+CURSOR_LATE_TURN_GRACE_SECONDS = 15.0
 CURSOR_THOUGHT = "afterAgentThought"
 USAGE_EVENTS = {"stop", "afterAgentResponse"}
 USAGE_ATTR_KEYS = {
@@ -356,6 +361,7 @@ def reconstruct_trace(
     terminal = False
     execution_signals: list[tuple[str, str | None]] = []
     ledger = TurnLedger(source="sdk")
+    cursor_finalize: StoredRunEvent | None = None
 
     for event in ordered:
         payload = event.payload
@@ -392,45 +398,22 @@ def reconstruct_trace(
             if terminal:
                 continue
             terminal = True
-            raw_status = str(payload.get("status") or "")
-            if raw_status == "cancelled":
-                stored_lifecycle = RunLifecycle.CANCELLED
-                status = SpanStatus.UNSET
-            elif raw_status == "completed":
-                stored_lifecycle = RunLifecycle.COMPLETED
-                status = SpanStatus.OK
-            else:
-                stored_lifecycle = RunLifecycle.FAILED
-                status = SpanStatus.ERROR
             ended_at = _ensure_utc(event.occurred_at)
-            ledger.observe_finalize(
-                raw_status,
-                payload.get("attributes") if isinstance(payload.get("attributes"), dict) else None,
+            if _is_cursor_source(attributes):
+                cursor_finalize = event
+                continue
+            stored_lifecycle, status, attributes = _apply_finalize(
+                payload,
                 ended_at,
+                attributes,
+                spans,
+                ledger,
                 hook=_is_hook_source(attributes),
             )
-            extra_attrs = payload.get("attributes")
-            if isinstance(extra_attrs, dict):
-                attributes = {**attributes, **extra_attrs}
-            if payload.get("error"):
-                attributes = {**attributes, "error": payload["error"]}
-            for agent_id, agent in list(spans.items()):
-                if agent.type is not SpanType.AGENT:
-                    continue
-                duration = max(
-                    agent.duration_ms,
-                    (_ensure_utc(ended_at) - _ensure_utc(agent.started_at)).total_seconds() * 1000,
-                )
-                spans[agent_id] = agent.model_copy(
-                    update={
-                        "status": status if agent.status is SpanStatus.UNSET else agent.status,
-                        "duration_ms": duration,
-                    }
-                )
             continue
 
         if event.event_type is RunEventType.HEARTBEAT:
-            if terminal:
+            if terminal and not _late_cursor_turn_evidence(cursor_finalize, event):
                 continue
             extra = payload.get("attributes")
             if isinstance(extra, dict):
@@ -486,6 +469,16 @@ def reconstruct_trace(
                     ledger.observe_work(
                         span_payload.get("attributes"), _ensure_utc(event.occurred_at)
                     )
+
+    if cursor_finalize is not None and ended_at is not None:
+        stored_lifecycle, status, attributes = _apply_finalize(
+            _reconcile_cursor_session_end(cursor_finalize.payload, ledger, execution_signals),
+            ended_at,
+            attributes,
+            spans,
+            ledger,
+            hook=True,
+        )
 
     ordered_spans = sorted(
         spans.values(),
@@ -585,6 +578,108 @@ def _turn_source(attributes: dict[str, Any]) -> str:
         return "codex"
     source = str(attributes.get("nm5.source") or "")
     return source if source in {"vscode", "vscode-copilot", "cli"} else "sdk"
+
+
+def _apply_finalize(
+    payload: dict[str, Any],
+    ended_at: datetime,
+    attributes: dict[str, Any],
+    spans: dict[UUID, Span],
+    ledger: TurnLedger,
+    *,
+    hook: bool,
+) -> tuple[RunLifecycle, SpanStatus, dict[str, Any]]:
+    raw_status = str(payload.get("status") or "")
+    if raw_status == "cancelled":
+        lifecycle, status = RunLifecycle.CANCELLED, SpanStatus.UNSET
+    elif raw_status == "completed":
+        lifecycle, status = RunLifecycle.COMPLETED, SpanStatus.OK
+    else:
+        lifecycle, status = RunLifecycle.FAILED, SpanStatus.ERROR
+    extra_attrs = payload.get("attributes")
+    ledger.observe_finalize(
+        raw_status,
+        extra_attrs if isinstance(extra_attrs, dict) else None,
+        ended_at,
+        hook=hook,
+    )
+    if isinstance(extra_attrs, dict):
+        attributes = {**attributes, **extra_attrs}
+    if payload.get("error"):
+        attributes = {**attributes, "error": payload["error"]}
+    for agent_id, agent in list(spans.items()):
+        if agent.type is not SpanType.AGENT:
+            continue
+        duration = max(
+            agent.duration_ms,
+            (_ensure_utc(ended_at) - _ensure_utc(agent.started_at)).total_seconds() * 1000,
+        )
+        spans[agent_id] = agent.model_copy(
+            update={
+                "status": status if agent.status is SpanStatus.UNSET else agent.status,
+                "duration_ms": duration,
+            }
+        )
+    return lifecycle, status, attributes
+
+
+def _cursor_close_reason(payload: dict[str, Any]) -> str | None:
+    attrs = payload.get("attributes")
+    if payload.get("status") != "cancelled" or not isinstance(attrs, dict):
+        return None
+    reason = str(attrs.get("nm5.end_reason") or "").strip().lower()
+    return reason if reason in CURSOR_CLOSE_REASONS else None
+
+
+def _late_cursor_turn_evidence(finalize: StoredRunEvent | None, event: StoredRunEvent) -> bool:
+    if finalize is None or _cursor_close_reason(finalize.payload) is None:
+        return False
+    if event.payload.get("progress") not in CURSOR_TURN_COMPLETE:
+        return False
+    lag = (_ensure_utc(event.occurred_at) - _ensure_utc(finalize.occurred_at)).total_seconds()
+    return lag <= CURSOR_LATE_TURN_GRACE_SECONDS
+
+
+def _reconcile_cursor_session_end(
+    payload: dict[str, Any],
+    ledger: TurnLedger,
+    signals: list[tuple[str, str | None]],
+) -> dict[str, Any]:
+    """Resolve a Cursor sessionEnd against the full turn history.
+
+    Only closure reasons are reconciled. Explicit provider reasons (completed,
+    aborted, error) are kept as reported.
+    """
+    attrs = dict(payload.get("attributes") or {})
+    attrs["nm5.reported_session_status"] = str(payload.get("status") or "")
+    reason = _cursor_close_reason(payload)
+    if reason is None:
+        attrs["nm5.lifecycle_evidence"] = "cursor.sessionEnd"
+        return {**payload, "attributes": attrs}
+
+    latest = ledger.latest()
+    idle = (
+        not ledger.executing()
+        and _execution_state(RunLifecycle.RUNNING, signals, cursor=True) is ExecutionState.IDLE
+    )
+    observed_stop = (
+        latest is not None and latest.evidence == "cursor.stop" and latest.provenance == "observed"
+    )
+    if latest is None:
+        evidence = "cursor.close_without_turn_evidence"
+    elif observed_stop and latest.status == COMPLETED and idle:
+        attrs["nm5.lifecycle_evidence"] = "cursor.close_after_completed_turn"
+        attrs["nm5.outcome"] = "completed"
+        return {**payload, "status": "completed", "error": None, "attributes": attrs}
+    elif observed_stop and latest.status == FAILED and idle:
+        attrs["nm5.lifecycle_evidence"] = "cursor.close_after_failed_turn"
+        attrs["nm5.outcome"] = "failure"
+        error = {"reason": reason, "outcome": "failure", "evidence": "cursor.stop"}
+        return {**payload, "status": "failed", "error": error, "attributes": attrs}
+    else:
+        evidence = "cursor.close_before_turn_completed"
+    attrs["nm5.lifecycle_evidence"] = evidence
+    return {**payload, "attributes": attrs}
 
 
 def _generation_from_payload(payload: dict[str, Any]) -> str | None:
@@ -831,7 +926,8 @@ def gate_new_event(existing: Sequence[StoredRunEvent], incoming: StoredRunEvent)
 
     Duplicate event_id is allowed (idempotent retry). Delayed span_complete
     and span_start for spans already in the run are reconciled without
-    leaving the terminal lifecycle.
+    leaving the terminal lifecycle. Cursor stop/afterAgentResponse arriving
+    within the grace window after sessionEnd are accepted as turn evidence.
     """
     if any(event.event_id == incoming.event_id for event in existing):
         return
@@ -844,6 +940,13 @@ def gate_new_event(existing: Sequence[StoredRunEvent], incoming: StoredRunEvent)
     terminal = current.lifecycle in TERMINAL_LIFECYCLES
     if not terminal:
         return
+    if incoming.event_type is RunEventType.HEARTBEAT and _is_cursor_source(current.attributes):
+        finalize = next(
+            (item for item in sort_events(existing) if item.event_type is RunEventType.FINALIZE),
+            None,
+        )
+        if _late_cursor_turn_evidence(finalize, incoming):
+            return
     if incoming.event_type is RunEventType.SPAN_COMPLETE:
         span_id = incoming.payload.get("span_id")
         known = {str(span.span_id) for span in current.spans}

@@ -43,11 +43,21 @@ test("README turn in an open session counts as a completed turn, not a failure",
   assert.equal(sessionLabel(traces[0]), "Idle / Open");
 });
 
-test("closing the chat keeps the turn completed while the session is cancelled", () => {
+test("closing the chat mid-turn keeps completed turns while the session is cancelled", () => {
   const closed = run({ lifecycle: "cancelled", execution_state: "idle", ended_at: "2026-01-01T00:01:00Z" });
   assert.equal(turnCompletion([closed]).rate, 1);
   assert.equal(sessionOutcomes([closed]).cancelled, 1);
   assert.equal(sessionLabel(closed), "Cancelled");
+});
+
+test("a chat closed after its turn completed is a completed session, not verified success", () => {
+  const closed = run({ lifecycle: "completed", execution_state: "idle", ended_at: "2026-01-01T00:01:00Z" });
+  const sessions = sessionOutcomes([closed]);
+  assert.deepEqual([sessions.finalized, sessions.cancelled], [1, 0]);
+  assert.equal(sessionLabel(closed), "Session finalized");
+  assert.deepEqual(recentCompletedTurns([closed]), [closed]);
+  const tasks = taskOutcomes([closed]);
+  assert.deepEqual([tasks.unverified, tasks.verifiedSuccess, tasks.verifiedRate], [1, 0, null]);
 });
 
 test("denominators exclude executing, provisional and turnless sessions", () => {

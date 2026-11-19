@@ -415,6 +415,69 @@ def test_late_identity_verified_usage_after_finalize(client: TestClient) -> None
     assert rejected.status_code == 409
 
 
+def _cursor_turn_then_close(client: TestClient, closed_at: datetime) -> str:
+    created = _start(
+        client,
+        attributes={"nm5.source": "cursor", "agent.framework": "cursor", "nm5.session_id": "c1"},
+    )
+    trace_id = created["trace_id"]
+    thought = {
+        "event_type": "heartbeat",
+        "sequence": 1,
+        "progress": "afterAgentThought",
+        "occurred_at": (closed_at - timedelta(seconds=2)).isoformat(),
+        "attributes": {"nm5.generation_id": "g1"},
+    }
+    assert client.post(f"/v1/runs/{trace_id}/events", json=[thought]).status_code == 200
+    closed = client.post(
+        f"/v1/runs/{trace_id}/finalize",
+        json={
+            "status": "cancelled",
+            "sequence": 2,
+            "occurred_at": closed_at.isoformat(),
+            "error": {"reason": "user_close", "outcome": "cancelled"},
+            "attributes": {"nm5.end_reason": "user_close", "nm5.outcome": "cancelled"},
+        },
+    )
+    assert closed.json()["lifecycle"] == "cancelled"
+    return trace_id
+
+
+def _late_stop(occurred_at: datetime) -> dict:
+    return {
+        "event_type": "heartbeat",
+        "sequence": 3,
+        "progress": "stop",
+        "occurred_at": occurred_at.isoformat(),
+        "attributes": {"nm5.generation_id": "g1", "nm5.turn_status": "completed"},
+    }
+
+
+def test_cursor_stop_racing_session_end_is_reconciled(client: TestClient) -> None:
+    closed_at = datetime.now(UTC)
+    trace_id = _cursor_turn_then_close(client, closed_at)
+    late = _late_stop(closed_at + timedelta(seconds=1))
+    first = client.post(f"/v1/runs/{trace_id}/events", json=[late])
+    replay = client.post(f"/v1/runs/{trace_id}/events", json=[late])
+    assert first.status_code == replay.status_code == 200
+    assert replay.json()["lifecycle"] == "completed"
+    assert replay.json()["attributes"]["nm5.end_reason"] == "user_close"
+    row = next(item for item in client.get("/v1/traces").json() if item["trace_id"] == trace_id)
+    assert row["lifecycle"] == "completed"
+    assert row["turns_completed"] == 1
+    assert row["task_outcome"] == "unverified"
+
+
+def test_cursor_stop_long_after_session_end_is_rejected(client: TestClient) -> None:
+    closed_at = datetime.now(UTC) - timedelta(minutes=10)
+    trace_id = _cursor_turn_then_close(client, closed_at)
+    late = client.post(
+        f"/v1/runs/{trace_id}/events", json=[_late_stop(closed_at + timedelta(minutes=5))]
+    )
+    assert late.status_code == 409
+    assert client.get(f"/v1/traces/{trace_id}").json()["lifecycle"] == "cancelled"
+
+
 def test_unknown_run_events_are_404(client: TestClient) -> None:
     missing = uuid4()
     response = client.post(

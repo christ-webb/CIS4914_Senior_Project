@@ -158,7 +158,13 @@ class CursorAdapter:
             )
         if event == "sessionEnd":
             reason = str(payload.get("reason") or "other")
+            # Closure reasons stay "cancelled" on the wire; the API reconciles them
+            # against turn evidence because only it sees the durable event history.
             status, outcome = map_session_outcome(reason)
+            end_attributes: dict[str, Any] = {}
+            final_status = as_str(payload, "final_status")
+            if final_status:
+                end_attributes["nm5.cursor_final_status"] = final_status[:200]
             return SessionPlan(
                 session_id=session_id,
                 agent=AGENT,
@@ -167,7 +173,18 @@ class CursorAdapter:
                 occurred_at=occurred,
                 workspace=workspace,
                 model=model,
-                events=[finalize_event(AGENT, session_id, key, occurred, status, reason, outcome)],
+                events=[
+                    finalize_event(
+                        AGENT,
+                        session_id,
+                        key,
+                        occurred,
+                        status,
+                        reason,
+                        outcome,
+                        attributes=end_attributes,
+                    )
+                ],
             )
         return SessionPlan(
             session_id=session_id,

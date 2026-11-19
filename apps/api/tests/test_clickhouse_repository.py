@@ -2,17 +2,19 @@
 
 import os
 from datetime import UTC, datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from no_more_500s_api.core.config import Settings
 from no_more_500s_api.domain.models import (
     RunEventIn,
+    RunEventType,
     RunStart,
     Span,
     SpanStatus,
     SpanType,
+    StoredRunEvent,
     TraceCreate,
 )
 from no_more_500s_api.main import create_app
@@ -574,6 +576,70 @@ def test_completed_turn_survives_restart_and_chat_closure() -> None:
             "/v1/traces", params={"project_id": project, "activity": "completed_turns"}
         ).json()
         assert len(rows) == 1
-        assert rows[0]["lifecycle"] == "cancelled"
+        assert rows[0]["lifecycle"] == "completed"
         assert rows[0]["turns_completed"] == 1
         assert rows[0]["turns_failed"] == 0
+        assert rows[0]["task_outcome"] == "unverified"
+
+
+def test_historical_cursor_closures_reconstruct_without_rewrites() -> None:
+    repo = repository()
+    project = f"history-{uuid4()}"
+    t0 = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
+    start_attrs = {"nm5.source": "cursor", "agent.framework": "cursor"}
+    legacy_close = {
+        "status": "cancelled",
+        "error": {"reason": "user_close", "outcome": "cancelled"},
+        "attributes": {"nm5.end_reason": "user_close", "nm5.outcome": "cancelled"},
+    }
+
+    def write(trace_id: UUID, progress: list[tuple[str, dict[str, str]]]) -> None:
+        start = {
+            "project_id": project,
+            "name": "legacy",
+            "started_at": t0.isoformat(),
+            "attributes": start_attrs,
+        }
+        events: list[tuple[RunEventType, dict[str, object]]] = [(RunEventType.RUN_START, start)]
+        events += [(RunEventType.HEARTBEAT, {"progress": p, "attributes": a}) for p, a in progress]
+        events.append((RunEventType.FINALIZE, legacy_close))
+        for sequence, (kind, payload) in enumerate(events):
+            repo._insert_run_event(
+                StoredRunEvent(
+                    event_id=uuid4(),
+                    trace_id=trace_id,
+                    event_type=kind,
+                    sequence=sequence,
+                    occurred_at=t0 + timedelta(seconds=sequence),
+                    received_at=t0 + timedelta(seconds=sequence),
+                    payload=payload,
+                )
+            )
+
+    finished, unproven = uuid4(), uuid4()
+    write(finished, [
+        ("afterAgentResponse", {"nm5.generation_id": "g1"}),
+        ("stop", {"nm5.generation_id": "g1", "nm5.turn_status": "completed"}),
+    ])
+    write(unproven, [("afterAgentResponse", {"nm5.generation_id": "g1"})])
+
+    def stored_rows() -> int:
+        return int(
+            repo._client_or_raise()
+            .query(
+                "SELECT count() FROM run_events WHERE trace_id IN ({a:UUID}, {b:UUID})",
+                parameters={"a": str(finished), "b": str(unproven)},
+            )
+            .result_rows[0][0]
+        )
+
+    before = stored_rows()
+    detail = repo.get(finished)
+    assert detail.lifecycle.value == "completed"
+    assert detail.attributes["nm5.end_reason"] == "user_close"
+    assert detail.attributes["nm5.task_outcome_status"] == "unverified"
+    assert repo.get(unproven).lifecycle.value == "cancelled"
+    rows = repo.list(TraceListQuery(project_id=project))
+    listed = {row.trace_id: row.lifecycle.value for row in rows}
+    assert listed == {finished: "completed", unproven: "cancelled"}
+    assert stored_rows() == before
